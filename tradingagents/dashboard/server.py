@@ -209,6 +209,11 @@ def create_app(config=None, db_path=None):
     def state():
         return desk.state()
 
+    @app.get("/api/health")
+    def health():
+        result = desk.automation.health()
+        return JSONResponse(result, status_code=200 if result["ok"] else 503)
+
     @app.get("/api/market/{ticker}")
     def market(ticker: str):
         try:

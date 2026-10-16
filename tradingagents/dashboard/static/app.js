@@ -202,9 +202,10 @@ async function refreshPaper() {
     paperState=await api('paper/status');
     const p=paperState;
     const local=p.mode==='local', label=local?'Local automatic simulator':'Alpaca paper';
-    $('#paper-status').textContent=`${label} ${p.connected?'connected':'unavailable'} · ${p.enabled?'Daily runs enabled':'Daily runs paused'} · ${p.busy?'Cycle running · ':''}${p.error || p.message}`;
+    const failure=p.error || (p.health && !p.health.ok ? p.health.error || 'Research scheduler is unavailable. Check the background service.' : '');
+    $('#paper-status').textContent=`${label} ${p.connected?'connected':'unavailable'} · ${p.enabled?'Daily runs enabled':'Daily runs paused'} · ${p.busy?'Cycle running · ':''}${failure || p.message}`;
     $('#paper-cadence').textContent=local?'Local daily runs start at 16:30 New York time when a Yahoo bar exists for that date. Run now can use a partial daily bar. Snapshot fills include 0.05% slippage per side; fees, latency and liquidity are not modeled. This account is separate from Alpaca and the manual ledger.':'Alpaca daily research starts at 10:00 New York on market days, with no new orders in the final 30 minutes. DAY limit orders use fresh IEX quotes with a 0.5% price allowance. Alpaca reports actual paper order statuses and simulated fills. Use a dedicated paper account.';
-    $('#paper-status').classList.toggle('error',Boolean(p.error));
+    $('#paper-status').classList.toggle('error',Boolean(failure));
     if (!p.configured && !local) $('#paper-credentials').open=true;
     if (!controlBusy) $('#paper-mode').value=p.mode;
     $('#paper-mode').disabled=Boolean(p.busy) || controlBusy;

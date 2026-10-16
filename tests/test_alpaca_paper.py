@@ -366,3 +366,13 @@ def test_concurrent_dashboard_startup_serializes_schema_migrations(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         modes = list(pool.map(lambda _: Desk(DEFAULT_CONFIG, path).automation.settings()["mode"], range(4)))
     assert modes == ["alpaca"] * 4
+
+
+def test_restart_marks_interrupted_claims_and_never_repeats_todays_attempt(auto):
+    with auto.store.connect() as db:
+        db.execute("INSERT INTO paper_runs (account,day,ticker,client_id,status,note,updated) VALUES ('paper-account','2026-10-16','NVDA','interrupted-today','researching','started','2026-10-16')")
+        db.execute("INSERT INTO paper_runs (account,day,ticker,client_id,status,note,updated) VALUES ('paper-account','2026-10-15','MSFT','interrupted-yesterday','researching','started','2026-10-15')")
+    cycle(auto)
+    assert not auto.broker.sent
+    assert len(auto.status()["runs"]) == 2
+    assert all(r["status"] == "error" and "Interrupted" in r["note"] for r in auto.status()["runs"])

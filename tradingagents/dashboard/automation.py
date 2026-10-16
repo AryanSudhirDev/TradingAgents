@@ -3,6 +3,8 @@
 import copy
 import hashlib
 import json
+import logging
+import os
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -17,6 +19,7 @@ from .simulator import LocalPaper
 from .store import stock_symbol
 
 NEW_YORK = ZoneInfo("America/New_York")
+logger = logging.getLogger(__name__)
 
 
 def trading_window(clock, *, scheduled=False):
@@ -34,6 +37,10 @@ class PaperAutomation:
         self.run_lock = threading.Lock()
         self.cancel = threading.Event()
         self.shutdown = threading.Event()
+        self.worker = None
+        self.started_at = datetime.now(UTC).isoformat()
+        self.last_poll = None
+        self.scheduler_error = None
         self.message = "Connect an Alpaca paper account to begin."
         self.cached = None
         self.fetched = 0
@@ -134,14 +141,30 @@ class PaperAutomation:
 
     def start(self):
         def worker():
-            while not self.shutdown.wait(30):
-                if self.settings()["enabled"]:
-                    self.kick()
-        threading.Thread(target=worker, daemon=True).start()
+            while not self.shutdown.is_set():
+                self.last_poll = datetime.now(UTC).isoformat()
+                try:
+                    if self.settings()["enabled"]:
+                        self.kick()
+                    self.scheduler_error = None
+                except Exception:
+                    self.scheduler_error = "Scheduler check failed; retrying in 30 seconds. Check the server log."
+                    logger.exception("Paper scheduler check failed")
+                if self.shutdown.wait(30):
+                    break
+        self.worker = threading.Thread(target=worker, daemon=True)
+        self.worker.start()
 
     def stop(self):
         self.shutdown.set()
         self.cancel.set()
+
+    def health(self):
+        alive = bool(self.worker and self.worker.is_alive())
+        fresh = bool(self.last_poll and (datetime.now(UTC) - datetime.fromisoformat(self.last_poll)).total_seconds() < 120)
+        return {"ok": alive and fresh and not self.scheduler_error, "pid": os.getpid(),
+                "started_at": self.started_at, "worker_alive": alive, "last_poll": self.last_poll,
+                "error": self.scheduler_error}
 
     def update(self, account, day, ticker, status, note, *, rating=None, intent=None):
         with self.store.connect() as db:
@@ -214,6 +237,11 @@ class PaperAutomation:
                 if not existing:
                     raise BrokerError("An uncertain submission needs review in Alpaca. No further orders will be sent.")
                 self.update(account_id, previous["day"], previous["ticker"], "submitted", "Recovered broker order: " + existing["status"])
+            # The process lock proves these claims belong to a worker that has stopped.
+            with self.store.connect() as db:
+                db.execute("UPDATE paper_runs SET status='error',note=?,updated=? WHERE account=? AND status='researching'",
+                           ("Interrupted research. No order was sent; this symbol resumes on the next trading day.",
+                            datetime.now(UTC).isoformat(), account_id))
             now, allowed = self.window(execution, scheduled=scheduled)
             if not allowed:
                 self.message = "Waiting for 16:30 New York on a market day." if execution is self.simulator else "Waiting for a market session: daily start 10:00 New York; no new orders in the final 30 minutes."
@@ -317,7 +345,7 @@ class PaperAutomation:
         account_id = "local-forward" if local else settings["account"]
         result = {"configured": bool(self.broker), "enabled": bool(settings["enabled"]), "symbols": settings["symbols"],
                   "mode": settings["mode"], "busy": self.run_lock.locked(), "message": self.message, "connected": False,
-                  "performance": self.performance(account_id)}
+                  "performance": self.performance(account_id), "health": self.health()}
         with self.store.connect() as db:
             result["runs"] = [dict(r) for r in db.execute("SELECT day,ticker,client_id,status,rating,intent,note,updated,report IS NOT NULL AS has_report FROM paper_runs WHERE account=? ORDER BY updated DESC LIMIT 100", (account_id,))]
         if local:

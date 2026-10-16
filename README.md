@@ -350,6 +350,59 @@ Current social inputs are Yahoo headlines, StockTwits and Reddit RSS. There is
 no X/Twitter feed or streaming quote connection. FRED needs its own key, and
 source outages and incomplete historical social coverage still apply.
 
+For unattended operation on **macOS**, run this from the configured checkout
+with its virtual environment, after any active research has finished:
+
+```bash
+.venv/bin/python -m tradingagents.dashboard.operations install
+```
+
+This installs two private per-user LaunchAgents. `dev.tradingagents.dashboard`
+starts at login and restarts after process exit; `caffeinate -s` prevents idle
+system sleep while connected to AC power. The display can still sleep. After a
+reboot you must log in; a powered-off Mac, closed lid, forced sleep, lost network
+or expired/revoked credentials can still interrupt operation. Keep this checkout
+and virtual environment at the installed location. Installing again updates the
+jobs and restarts the server; it does not reset credentials, journals or daily
+attempts. Completed attempts are never repeated, interrupted research is marked
+as failed without an order and resumes the next market day, and uncertain broker
+submissions are reconciled by their existing client IDs.
+
+`dev.tradingagents.progress` checks the dashboard at login and daily at **14:15
+in the Mac's local timezone** (17:15 New York when the Mac is set to Los Angeles).
+It creates timestamped private snapshots and consistent SQLite backups under
+`~/.tradingagents/dashboard/progress/`, including account equity, positions,
+fills, research outcomes, model settings and the existing sampled SPY comparison.
+Credentials are excluded. The check reports a stopped/stale scheduler, paused
+automation, unavailable account, failed attempts, uncertain submissions, rejected
+orders and missing research after an exchange trading day closes. Market holidays
+come from Alpaca's calendar. It only reads broker data and never submits an order.
+These are local backups, so disk loss still loses them; they are not cloud copies.
+Checks and backups accumulate for the baseline test and should be archived or
+pruned when extending it beyond the initial few weeks.
+
+Run a check now, or inspect the health endpoint without calling the broker:
+
+```bash
+.venv/bin/python -m tradingagents.dashboard.operations check
+curl --fail http://127.0.0.1:8000/api/health
+launchctl print gui/$(id -u)/dev.tradingagents.dashboard
+```
+
+The health endpoint returns 503 if the scheduler stops, stops polling for two
+minutes, or encounters a scheduler error. Temporary scheduler errors retry every
+30 seconds. The paper status line also exposes scheduler failures. Runtime logs
+are in `~/.tradingagents/logs/dashboard.console.log`; progress-check summaries are
+in `progress.console.log` in the same directory. A healthy process does not
+guarantee every upstream source is available or that an analysis will succeed.
+
+For the initial baseline, review roughly ten market sessions of run completion,
+fills, return, SPY comparison and sampled drawdown. Record any changes to models,
+managed companies or sizing rules. This period checks operation, not profitability.
+X remains disconnected during this baseline. A later X experiment should compare
+parallel recommendations using the same inputs/cutoff except for X, initially
+without changing the baseline paper account's orders.
+
 The interface styling is adapted from
 [flo007ro's community dashboard](https://github.com/flo007ro/TradingAgents/tree/06610d7aad93b6bf42528d248199a1d18c73c901)
 under Apache-2.0; see `tradingagents/dashboard/NOTICE`. Its backend, paper ledger
