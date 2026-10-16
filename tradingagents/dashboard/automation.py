@@ -57,6 +57,7 @@ class PaperAutomation:
                 );
                 CREATE TABLE IF NOT EXISTS paper_equity (account TEXT NOT NULL, stamp TEXT NOT NULL, equity INTEGER NOT NULL, benchmark INTEGER, PRIMARY KEY(account,stamp));
             """)
+            db.execute("BEGIN IMMEDIATE")
             if "report" not in {r[1] for r in db.execute("PRAGMA table_info(paper_runs)")}:
                 db.execute("ALTER TABLE paper_runs ADD COLUMN report TEXT")
             if "mode" not in {r[1] for r in db.execute("PRAGMA table_info(automation)")}:
@@ -260,7 +261,7 @@ class PaperAutomation:
                 )}
                 report.update(company_of_interest=ticker, trade_date=day)
                 with self.store.connect() as db:
-                    db.execute("UPDATE paper_runs SET report=? WHERE client_id=?", (json.dumps(report, default=str), client_id))
+                    db.execute("UPDATE paper_runs SET report=?,rating=? WHERE client_id=?", (json.dumps(report, default=str), rating, client_id))
                 with self.gate:
                     if self.cancel.is_set():
                         self.update(account_id, day, ticker, "skipped", "Paused before submission", rating=rating)
@@ -295,7 +296,7 @@ class PaperAutomation:
             self.message = safe
             if account_id and day and ticker:
                 with self.store.connect() as db:
-                    db.execute("UPDATE paper_runs SET status='error',note=? WHERE account=? AND day=? AND ticker=? AND status='researching'", (safe, account_id, day, ticker))
+                    db.execute("UPDATE paper_runs SET status='error',note=?,updated=? WHERE account=? AND day=? AND ticker=? AND status='researching'", (safe, datetime.now(UTC).isoformat(), account_id, day, ticker))
             with self.desk.lock:
                 if analysis_claimed and self.desk.active and self.desk.active["status"] == "running":
                     self.desk.active.update(status="error", error=safe)

@@ -214,6 +214,9 @@ def test_analysis_uses_current_stream_lifecycle_and_paper_holdings(app, monkeypa
         def clear_checkpoint_on_success(self, *a, **k):
             seen["cleared"] = True
 
+        def run_settings(self):
+            return {"llm_provider": "chatgpt", "quick_think_llm": "test-model"}
+
         def end_checkpoint(self):
             seen["closed"] = True
 
@@ -224,6 +227,7 @@ def test_analysis_uses_current_stream_lifecycle_and_paper_holdings(app, monkeypa
     assert seen["portfolio"].positions[0].quantity == 10
     assert seen["portfolio"].cash == (INITIAL_CASH - 100010) / 100
     assert seen["state"]["market_report"] == "Verified prices."
+    assert seen["state"]["run_settings"]["llm_provider"] == "chatgpt"
     assert seen["saved"] and seen["cleared"] and seen["closed"]
 
 

@@ -346,3 +346,23 @@ def test_stale_scheduler_trigger_cannot_run_after_mode_switch(auto):
     auto.control("select", mode="local")
     auto.kick(scheduled=True)
     assert auto.cancel.is_set() and not auto.run_lock.locked()
+
+
+def test_pricing_failure_retains_the_completed_research_rating(auto, monkeypatch):
+    def fail(ticker):
+        raise BrokerError("Quote unavailable")
+
+    monkeypatch.setattr(auto.broker, "quote", fail)
+    cycle(auto)
+    run = auto.status()["runs"][0]
+    assert run["status"] == "error" and run["rating"] == "Buy" and run["has_report"]
+    assert not auto.broker.sent
+
+
+def test_concurrent_dashboard_startup_serializes_schema_migrations(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    path = tmp_path / "paper.sqlite3"
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        modes = list(pool.map(lambda _: Desk(DEFAULT_CONFIG, path).automation.settings()["mode"], range(4)))
+    assert modes == ["alpaca"] * 4

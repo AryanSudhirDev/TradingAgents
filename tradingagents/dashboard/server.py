@@ -151,6 +151,7 @@ class Desk:
             graph.record_decision(ticker, today, final)
             graph.save_reports(final, ticker)
             graph.clear_checkpoint_on_success(ticker, today, portfolio=portfolio)
+            final["run_settings"] = graph.run_settings()
             with self.lock:
                 self.active.update(status="done", stats=stats.get_stats())
             return final
