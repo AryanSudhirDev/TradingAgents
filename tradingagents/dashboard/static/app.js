@@ -186,7 +186,7 @@ let paperPolling=false, paperState, controlBusy=false;
 function renderPerformance(p) {
   const box=$('#paper-performance');
   if (!p?.samples?.length) { box.innerHTML='<p class="muted">Forward performance begins with the first cycle. Strategy and SPY price returns are sampled before and after cycles.</p>'; return; }
-  const pct=value=>value==null?'Unavailable':`${value.toFixed(2)}%`;
+  const pct=value=>value==null?'Unavailable':`${value.toFixed(3)}%`;
   const points=p.samples.map(s=>({stamp:s.stamp,strategy:(s.equity/p.initial_equity-1)*100,spy:s.benchmark && p.initial_benchmark ? (s.benchmark/p.initial_benchmark-1)*100 : null}));
   const values=points.flatMap(s=>[s.strategy,s.spy]).filter(v=>v!=null && Number.isFinite(v));
   const low=Math.min(0,...values), span=Math.max(...values)-low || 1;
@@ -219,7 +219,12 @@ async function refreshPaper() {
     $('#broker-positions').innerHTML=table([`${label} symbol`,'Shares','Average cost','Current mark','Unrealized P&L'],(p.positions || []).map(pos=>[esc(pos.symbol),esc(pos.qty),dollars(Number(pos.avg_entry_price)*100),dollars(Number(pos.current_price)*100),dollars(Number(pos.unrealized_pl)*100)]));
     $('#paper-orders-title').textContent=local?'Local automatic fills · latest 100':'Alpaca orders · latest 100, including fills and rejections';
     $('#broker-orders').innerHTML=table(['Submitted','Symbol','Side','Shares','Status','Filled shares','Average fill','Limit','Client order ID'],(p.orders || []).map(o=>[esc(o.submitted_at?new Date(o.submitted_at).toLocaleString():'—'),esc(o.symbol),esc(o.side),esc(o.qty),esc(o.status),esc(o.filled_qty),o.filled_avg_price?dollars(Number(o.filled_avg_price)*100):'—',o.limit_price?dollars(Number(o.limit_price)*100):'—',esc(o.client_order_id)]));
-    $('#paper-journal').innerHTML=table(['Day','Symbol','Rating','Execution','Details','Report','Client order ID'],p.runs.map(r=>[esc(r.day),esc(r.ticker),esc(r.rating || '—'),esc(r.status),esc(r.note)+(r.intent?`<br>${esc(r.intent)}`:''),r.has_report?`<a href="/api/paper/report/${encodeURIComponent(r.client_id)}" target="_blank" rel="noreferrer">Research</a>`:'—',esc(r.client_id)]));
+    const orderStates=new Map((p.orders || []).map(o=>[o.client_order_id,o.status]));
+    $('#paper-journal').innerHTML=table(['Day','Symbol','Rating','Execution','Fill status','Details','Report','Client order ID'],p.runs.map(r=>{
+      let intent='';
+      try { const i=JSON.parse(r.intent || 'null'); if(i) intent=`<br>${esc(i.side.toUpperCase())} ${esc(i.qty)} ${esc(i.symbol)} · ${local?'simulated price':'limit'} ${dollars(Number(i.limit_price)*100)}`; } catch { intent=''; }
+      return [esc(r.day),esc(r.ticker),esc(r.rating || '—'),esc(r.status),esc(orderStates.get(r.client_id) || (r.status==='skipped'?'No order':'—')),esc(r.note)+intent,r.has_report?`<a href="/api/paper/report/${encodeURIComponent(r.client_id)}" target="_blank" rel="noreferrer">Research</a>`:'—',esc(r.client_id)];
+    }));
   } catch(error) { $('#paper-status').textContent='Paper status unavailable: '+error.message; }
   finally { paperPolling=false; }
 }
