@@ -13,10 +13,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from cli.stats_handler import StatsCallbackHandler
 from tradingagents.backtest import iter_grid, run_backtest, summarize
 from tradingagents.dashboard.operations import private_write
 from tradingagents.dashboard.store import stock_symbol
 from tradingagents.dataflows.config import run_config
+from tradingagents.dataflows.files import locked
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import _NOT_IN_SIGNATURE
@@ -68,11 +70,19 @@ def run_agent_comparison(tickers, dates, config=None, resume=None):
         raise ValueError("Resume an experiment inside ~/.tradingagents/experiments/agents/.")
     if not resume:
         folder.mkdir(parents=True, mode=0o700)
+    with locked(folder / "experiment", wait=False) as acquired:
+        if not acquired:
+            raise ValueError("This experiment is already running; do not start another copy.")
+        return _run_agent_comparison(tickers, dates, config, folder, resume)
+
+
+def _run_agent_comparison(tickers, dates, config, folder, resume):
     experiment = {"tickers": tickers, "dates": dates, "provider": config["llm_provider"],
                   "quick_model": config["quick_think_llm"], "deep_model": config["deep_think_llm"],
                   "settings_hash": hashlib.sha256(json.dumps({k: v for k, v in config.items() if k not in _NOT_IN_SIGNATURE}, sort_keys=True, default=str).encode()).hexdigest(),
                   "options": {k: config.get(k) for k in ("quick_think_provider", "deep_think_provider", "max_debate_rounds", "max_risk_discuss_rounds", "temperature", "output_language", "data_vendors", "tool_vendors")},
                   "holding_sessions": config.get("holding_period_days", 5), "variants": [],
+                  "usage_note": "Observed model calls and tokens, not a dollar bill or subscription-credit conversion. Interrupted responses may omit usage; pre-instrumentation runs are excluded.",
                   "limits": "Decision scoring, not a portfolio simulation. Historical text coverage is incomplete; model training may contain later events. One sample per cell cannot establish an edge."}
     if resume:
         saved = json.loads((folder / "results.json").read_text())
@@ -84,45 +94,79 @@ def run_agent_comparison(tickers, dates, config=None, resume=None):
             raise ValueError("Resume with the original model and data configuration.")
         saved.setdefault("options", experiment["options"])
         saved.setdefault("settings_hash", experiment["settings_hash"])
+        saved.setdefault("usage_note", experiment["usage_note"])
         experiment = saved
+    experiment["status"] = "running"
+    experiment["updated_at"] = datetime.now(UTC).isoformat()
     private_write(folder / "results.json", json.dumps(experiment, indent=2).encode())
     for name, analysts in (("market_only", ["market"]), ("full", ["market", "social", "news", "fundamentals"])):
-        started = time.monotonic()
-        isolated = {**config, "results_dir": str(folder), "data_cache_dir": str(folder / name / "cache")}
-        print(json.dumps({"variant_started": name, "cells": len(tickers) * len(dates), "folder": str(folder)}), flush=True)
-        previous = next((v for v in experiment["variants"] if v["name"] == name), {})
-        attempts = list(previous.get("attempts", []))
-        if previous and not attempts:
-            attempts.append({"failures": previous.get("failures", []), "settlement_failures": previous.get("settlement_failures", [])})
-        cells_run = previous.get("cells_run", 0)
-        for attempt in range(2):
-            result = run_backtest(tickers, dates, isolated, selected_analysts=analysts, run_id=name,
-                                  progress=lambda done, total, ticker, day: print(json.dumps({"cell": f"{done}/{total}", "ticker": ticker, "day": day}), flush=True))
-            cells_run += result.cells_run
-            attempts.append({"cells_run": result.cells_run, "skipped": result.skipped,
-                             "failures": result.failures, "settlement_failures": result.settlement_failures})
-            if not result.failures and not result.settlement_failures:
-                break
-            if attempt == 0:
-                print(json.dumps({"retrying_variant": name, "reason": "Resume failed cells/checkpoints or retry settlement once; completed cells are skipped."}), flush=True)
-        reports = []
-        for ticker in tickers:
-            for day in dates:
-                state_path = result.log_path.parent / ticker / "TradingAgentsStrategy_logs" / f"full_states_log_{day}.json"
-                if state_path.exists():
-                    state = json.loads(state_path.read_text())
-                    report_path = write_report_tree(state, ticker, result.log_path.parent / "reports" / ticker / day, settings=state.get("run_settings"))
-                    reports.append(str(report_path.with_suffix(".html")))
-        variant = {"name": name, "analysts": analysts, "elapsed_seconds": previous.get("elapsed_seconds", 0) + time.monotonic() - started,
-                   "cells_run": cells_run, "attempts": attempts, "failures": result.failures,
-                   "skipped_cells": result.skipped,
-                   "settlement_failures": result.settlement_failures, "log_path": str(result.log_path),
-                   "reports": reports,
-                   "summary": asdict(summarize(result))}
-        experiment["variants"] = [v for v in experiment["variants"] if v["name"] != name] + [variant]
-        private_write(folder / "results.json", json.dumps(experiment, indent=2, allow_nan=False).encode())
-        print(json.dumps({"variant_finished": name, "cells_run": cells_run, "failures": len(result.failures), "resolved": variant["summary"]["resolved"]}), flush=True)
+        _run_agent_variant(name, analysts, experiment, config, folder)
+    experiment["status"] = "incomplete" if any(v["status"] != "complete" for v in experiment["variants"]) else "complete"
+    private_write(folder / "results.json", json.dumps(experiment, indent=2, allow_nan=False).encode())
     return experiment, folder
+
+
+def _run_agent_variant(name, analysts, experiment, config, folder):
+    tickers, dates = experiment["tickers"], experiment["dates"]
+    started = time.monotonic()
+    isolated = {**config, "results_dir": str(folder), "data_cache_dir": str(folder / name / "cache")}
+    print(json.dumps({"variant_started": name, "cells": len(tickers) * len(dates), "folder": str(folder)}), flush=True)
+    previous = next((v for v in experiment["variants"] if v["name"] == name), {})
+    attempts = list(previous.get("attempts", []))
+    if previous and not attempts:
+        attempts.append({"failures": previous.get("failures", []), "settlement_failures": previous.get("settlement_failures", [])})
+    cells_run = previous.get("cells_run", 0)
+    path = folder / "backtest" / name / "trading_memory.md"
+    if path.exists():
+        saved = summarize(path)
+        cells_run = saved.resolved + saved.pending + saved.unscored
+    stats = StatsCallbackHandler()
+    prior_usage = previous.get("usage", {})
+
+    def save_progress(done, total, ticker, day):
+        usage = {k: prior_usage.get(k, 0) + v for k, v in stats.get_stats().items()}
+        running = {**previous, "name": name, "analysts": analysts, "status": "running",
+                   "current_cell": {"ticker": ticker, "date": day, "index": done, "remaining_this_attempt": total},
+                   "attempts": attempts, "cells_run": cells_run,
+                   "usage": usage, "elapsed_seconds": previous.get("elapsed_seconds", 0) + time.monotonic() - started}
+        if path.exists():
+            running["summary"] = asdict(summarize(path))
+            running["cells_run"] = sum(running["summary"][k] for k in ("resolved", "pending", "unscored"))
+        experiment["variants"] = [v for v in experiment["variants"] if v["name"] != name] + [running]
+        experiment["updated_at"] = datetime.now(UTC).isoformat()
+        private_write(folder / "results.json", json.dumps(experiment, indent=2, allow_nan=False).encode())
+        print(json.dumps({"variant": name, "cell": f"{done}/{total}", "ticker": ticker, "day": day}), flush=True)
+
+    for attempt in range(2):
+        result = run_backtest(tickers, dates, isolated, selected_analysts=analysts, run_id=name,
+                              progress=save_progress, callbacks=[stats])
+        cells_run += result.cells_run
+        attempts.append({"cells_run": result.cells_run, "skipped": result.skipped,
+                         "failures": result.failures, "settlement_failures": result.settlement_failures})
+        if not result.failures and not result.settlement_failures:
+            break
+        if attempt == 0:
+            print(json.dumps({"retrying_variant": name, "reason": "Resume failed cells/checkpoints or retry settlement once; completed cells are skipped."}), flush=True)
+    reports = []
+    for ticker in tickers:
+        for day in dates:
+            state_path = result.log_path.parent / ticker / "TradingAgentsStrategy_logs" / f"full_states_log_{day}.json"
+            if state_path.exists():
+                state = json.loads(state_path.read_text())
+                report_path = write_report_tree(state, ticker, result.log_path.parent / "reports" / ticker / day, settings=state.get("run_settings"))
+                reports.append(str(report_path.with_suffix(".html")))
+    variant = {"name": name, "analysts": analysts, "elapsed_seconds": previous.get("elapsed_seconds", 0) + time.monotonic() - started,
+               "status": "incomplete" if result.failures or result.settlement_failures else "complete",
+               "usage": {k: prior_usage.get(k, 0) + v for k, v in stats.get_stats().items()},
+               "cells_run": cells_run, "attempts": attempts, "failures": result.failures,
+               "skipped_cells": result.skipped,
+               "settlement_failures": result.settlement_failures, "log_path": str(result.log_path),
+               "reports": reports,
+               "summary": asdict(summarize(result))}
+    experiment["variants"] = [v for v in experiment["variants"] if v["name"] != name] + [variant]
+    experiment["updated_at"] = datetime.now(UTC).isoformat()
+    private_write(folder / "results.json", json.dumps(experiment, indent=2, allow_nan=False).encode())
+    print(json.dumps({"variant_finished": name, "cells_run": cells_run, "failures": len(result.failures), "resolved": variant["summary"]["resolved"]}), flush=True)
 
 
 def historical_bounds(start, end):
@@ -255,14 +299,15 @@ def main():
     parser.add_argument("--tickers", default="AAPL,MSFT,NVDA,JPM")
     parser.add_argument("--start", required=True)
     parser.add_argument("--end", required=True)
-    parser.add_argument("--agents", action="store_true", help="Run full versus market-only native decision scoring on a weekly date grid; calls the configured models.")
+    parser.add_argument("--agents", action="store_true", help="Run full versus market-only native decision scoring on a date grid; calls the configured models.")
     parser.add_argument("--resume", help="Continue a native --agents experiment from its private output folder.")
+    parser.add_argument("--every", type=int, default=7, help="Calendar days between --agents analysis dates (default: 7). Choose exchange sessions.")
     args = parser.parse_args()
     if args.resume and not args.agents:
         parser.error("--resume requires --agents.")
     try:
         if args.agents:
-            result, folder = run_agent_comparison(args.tickers.split(","), iter_grid(args.start, args.end, 7), resume=args.resume)
+            result, folder = run_agent_comparison(args.tickers.split(","), iter_grid(args.start, args.end, args.every), resume=args.resume)
             print(json.dumps({"folder": str(folder), "variants": result["variants"]}, indent=2))
             if any(v["failures"] or v["settlement_failures"] for v in result["variants"]):
                 parser.exit(1)

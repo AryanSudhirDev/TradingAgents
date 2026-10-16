@@ -1,5 +1,6 @@
 """Past-only signals, next-open execution, costs, coverage and experiment isolation."""
 
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -7,6 +8,7 @@ import pytest
 
 from tradingagents import strategy_comparison as comparison
 from tradingagents.backtest import BacktestResult, BacktestSummary
+from tradingagents.dataflows.files import locked
 from tradingagents.default_config import DEFAULT_CONFIG
 
 
@@ -140,3 +142,73 @@ def test_agent_cli_exits_with_failure_when_experiments_are_incomplete(monkeypatc
     with pytest.raises(SystemExit) as error:
         comparison.main()
     assert error.value.code == 1
+
+
+def test_progress_and_usage_survive_resume_without_double_counting(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    seen = []
+
+    def native(tickers, dates, config, **kwargs):
+        stats = kwargs["callbacks"][0]
+        stats.on_chat_model_start({}, [[]])
+        stats.tokens_in = 50
+        kwargs["progress"](1, 1, tickers[0], dates[0])
+        saved = json.loads((Path(config["results_dir"]) / "results.json").read_text())
+        running = next(v for v in saved["variants"] if v["name"] == kwargs["run_id"])
+        seen.append(running)
+        return BacktestResult(kwargs["run_id"], tmp_path / "memory.md")
+
+    monkeypatch.setattr(comparison, "run_backtest", native)
+    monkeypatch.setattr(comparison, "summarize", lambda result: BacktestSummary(0, 0, {}))
+    first, folder = comparison.run_agent_comparison(["NVDA"], ["2026-10-02"])
+    assert seen[0]["status"] == "running"
+    assert seen[0]["current_cell"]["ticker"] == "NVDA"
+    assert first["variants"][0]["usage"]["tokens_in"] == 50
+    second, _ = comparison.run_agent_comparison(["NVDA"], ["2026-10-02"], resume=folder)
+    assert second["status"] == "complete"
+    assert all(v["usage"]["tokens_in"] == 100 for v in second["variants"])
+    with locked(folder / "experiment"), pytest.raises(ValueError, match="already running"):
+        comparison.run_agent_comparison(["NVDA"], ["2026-10-02"], resume=folder)
+
+
+def test_quarterly_cli_grid_is_explicit(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(comparison, "run_agent_comparison", lambda tickers, dates, **k: (seen.extend(dates) or {"variants": []}, tmp_path))
+    monkeypatch.setattr(comparison.os, "umask", lambda mask: None)
+    monkeypatch.setattr("sys.argv", ["compare", "--agents", "--start", "2025-10-06", "--end", "2026-10-05", "--every", "91"])
+    comparison.main()
+    assert seen == ["2025-10-06", "2026-01-05", "2026-04-06", "2026-07-06", "2026-10-05"]
+
+
+def test_crashed_sweep_counts_its_already_saved_decisions(tmp_path, monkeypatch):
+    from tradingagents.memory import TradingMemoryLog
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    interrupted = False
+
+    def native(tickers, dates, config, **kwargs):
+        nonlocal interrupted
+        path = Path(config["results_dir"]) / "backtest" / kwargs["run_id"] / "trading_memory.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        memory = TradingMemoryLog({"memory_log_path": str(path)})
+        result = BacktestResult(kwargs["run_id"], path)
+        done = {e["date"] for e in memory.load_entries()}
+        for index, day in enumerate(dates, 1):
+            if day in done:
+                result.skipped += 1
+                continue
+            kwargs["progress"](index, len(dates), tickers[0], day)
+            if index == 2 and not interrupted:
+                interrupted = True
+                raise RuntimeError("process interrupted")
+            memory.store_decision(tickers[0], day, "Rating: Hold")
+            result.cells_run += 1
+        return result
+
+    monkeypatch.setattr(comparison, "run_backtest", native)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        comparison.run_agent_comparison(["NVDA"], ["2026-10-01", "2026-10-02"])
+    folder = next((tmp_path / ".tradingagents/experiments/agents").iterdir())
+    resumed, _ = comparison.run_agent_comparison(["NVDA"], ["2026-10-01", "2026-10-02"], resume=folder)
+    assert all(v["cells_run"] == 2 for v in resumed["variants"])
+    assert resumed["variants"][0]["skipped_cells"] == 1

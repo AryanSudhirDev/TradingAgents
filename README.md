@@ -630,6 +630,31 @@ same folder with `--agents --resume /absolute/path/to/experiment` and the origin
 companies, dates and model settings. It keeps the earlier failures in the attempt
 history. Remaining cell or settlement failures cause a nonzero command exit.
 
+For a broader, fixed comparison, `--every` controls the calendar spacing of
+analysis dates. This example runs eight companies at five quarterly dates
+(2025-10-06, 2026-01-05, 2026-04-06, 2026-07-06 and 2026-10-05), or 80 native
+decisions across the two configurations:
+
+```bash
+.venv/bin/python -m tradingagents.strategy_comparison --agents \
+  --tickers AAPL,MSFT,NVDA,JPM,XOM,UNH,WMT,CAT \
+  --start 2025-10-06 --end 2026-10-05 --every 91
+```
+
+Choose actual exchange sessions with completed outcome windows; the date grid
+does not skip holidays automatically. Each cell start updates private
+`results.json` with its active company/date, completed summary, elapsed time and
+observed model/tool calls and tokens. Usage includes retries and reflection,
+but interrupted responses can omit token counts; these are not dollar costs or
+a conversion to ChatGPT subscription credits. Completed calls from before this
+instrumentation are excluded. Only one process can hold an experiment at a time.
+An interrupted process can resume its original folder with the same command plus
+`--resume`; completed decisions are skipped. A wider historical study remains
+exploratory: model training leakage, missing old text, selected surviving
+companies and shared market dates prevent treating these cells as independent
+proof of a trading edge. The daily paper account already uses the full agent
+team, with fixed execution controls; comparisons do not change that account.
+
 ## Reproducibility
 
 TradingAgents is LLM-driven, so two runs of the same ticker and date can differ. This is expected for a research tool built on language models, not a defect. The variation comes from a few distinct sources, and it helps to separate them.
