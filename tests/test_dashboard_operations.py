@@ -21,7 +21,7 @@ def test_login_jobs_use_current_environment_and_ac_only_sleep_prevention(tmp_pat
     calls = []
     monkeypatch.setattr(operations.subprocess, "run", lambda args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(returncode=0))
     paths = operations.install_service(8123)
-    dashboard, progress = [plistlib.loads(Path(path).read_bytes()) for path in paths]
+    dashboard, progress, shadow = [plistlib.loads(Path(path).read_bytes()) for path in paths]
     assert dashboard["ProgramArguments"] == ["/usr/bin/caffeinate", "-s", operations.sys.executable,
                                               "-m", "tradingagents.dashboard.server", "--port", "8123"]
     assert dashboard["KeepAlive"] and dashboard["RunAtLoad"]
@@ -29,7 +29,10 @@ def test_login_jobs_use_current_environment_and_ac_only_sleep_prevention(tmp_pat
     assert dashboard["Umask"] == 0o077
     assert progress["StartCalendarInterval"] == {"Hour": 14, "Minute": 15}
     assert progress["RunAtLoad"] and "KeepAlive" not in progress
-    assert len(calls) == 4 and all(call[0][0] == "/bin/launchctl" for call in calls)
+    assert shadow["StartCalendarInterval"] == {"Hour": 14, "Minute": 45}
+    assert shadow["ProgramArguments"][-3:] == ["-m", "tradingagents.strategy_shadow", "run"]
+    assert shadow["RunAtLoad"] and "KeepAlive" not in shadow
+    assert len(calls) == 6 and all(call[0][0] == "/bin/launchctl" for call in calls)
     assert all(Path(path).stat().st_mode & 0o777 == 0o600 for path in paths)
 
 
@@ -46,7 +49,7 @@ def test_install_waits_for_launchd_to_finish_unloading_the_previous_job(tmp_path
 
     monkeypatch.setattr(operations.subprocess, "run", launch)
     monkeypatch.setattr(operations.time, "sleep", sleeps.append)
-    assert len(operations.install_service()) == 2
+    assert len(operations.install_service()) == 3
     assert failures and sleeps == [0.25]
 
 

@@ -205,6 +205,19 @@ def create_app(config=None, db_path=None):
     def script():
         return FileResponse(Path(__file__).parent / "static/app.js", media_type="text/javascript")
 
+    @app.get("/experiments")
+    def experiments(window: str = "evaluation", cost: int = 20, metric: str = "excess"):
+        from tradingagents.experiment_report import lab_snapshot, render_lab
+        try:
+            return HTMLResponse(render_lab(lab_snapshot(), window, cost, metric))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.get("/api/experiments")
+    def experiment_data():
+        from tradingagents.experiment_report import lab_snapshot
+        return lab_snapshot()
+
     @app.get("/api/state")
     def state():
         return desk.state()

@@ -38,6 +38,7 @@ def install_service(port=8000):
     for suffix, command, schedule in (
         ("dashboard", ["/usr/bin/caffeinate", "-s", sys.executable, "-m", "tradingagents.dashboard.server", "--port", str(port)], {"KeepAlive": True, "ThrottleInterval": 30}),
         ("progress", [sys.executable, "-m", "tradingagents.dashboard.operations", "check", "--port", str(port)], {"StartCalendarInterval": {"Hour": 14, "Minute": 15}}),
+        ("strategy-shadow", [sys.executable, "-m", "tradingagents.strategy_shadow", "run"], {"StartCalendarInterval": {"Hour": 14, "Minute": 45}}),
     ):
         label = f"dev.tradingagents.{suffix}"
         path = home / "Library/LaunchAgents" / f"{label}.plist"

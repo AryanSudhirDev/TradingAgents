@@ -135,6 +135,20 @@ def test_browser_boundaries_reject_foreign_origins_and_hosts(client):
     assert client.post("/api/watch", content="x" * 8193, headers={"origin": "http://127.0.0.1", "content-type": "application/json"}).status_code == 413
 
 
+def test_strategy_lab_routes_only_read_experiments(client, monkeypatch):
+    from tradingagents import experiment_report
+
+    monkeypatch.setattr(experiment_report, "lab_snapshot", lambda: {"agents": [], "sectors": None, "errors": []})
+    response = client.get("/experiments?window=validation&cost=20&metric=drawdown")
+    assert response.status_code == 200
+    assert "Strategy lab" in response.text
+    assert "Daily-close maximum drawdown" in response.text
+    assert "<script>" not in response.text
+    assert client.get("/experiments?cost=99").status_code == 400
+    assert client.get("/api/experiments").json()["agents"] == []
+    assert '/experiments' in client.get("/").text
+
+
 def test_paper_fill_uses_the_server_quote_and_no_client_price(client, app, monkeypatch):
     monkeypatch.setattr(app.state.desk, "market", lambda t: {"price": 123.45, "as_of": "2026-10-16"})
     body = {"ticker": "NVDA", "side": "BUY", "quantity": 2, "price": 1, "request_id": str(uuid4())}

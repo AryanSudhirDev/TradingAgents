@@ -90,7 +90,8 @@ This extension was specified before calculating its ETF rankings. It adds:
   evaluation: 2026-01-02..2026-10-15. Every slice is retrospective and resets
   capital to $100,000. Markets in the evaluation slice were previously observed;
   it is not a pristine unseen holdout. Parameters remain fixed across slices.
-- 252 prior market sessions, frozen adjusted OHLC and hashes, previous-close
+- 253 prior closes for a 252-session return and its execution lag, frozen
+  adjusted OHLC and hashes, previous-close
   signals, next-open fills, 5/20 bps adverse slippage, no shorts or leverage.
   Single-ETF sleeves start with up to 40% exposure and 60% uninvested cash.
   Sector basket entry weights are 40%/11; rotation entries target 10% per
@@ -124,7 +125,7 @@ score, not an executable trading return. Original native outcome precision and
 source snapshots can differ. The running native manifests and memory logs stay
 untouched by sidecar calculation.
 
-The hypotheses are motivated by [time-series momentum](https://fairmodel.econ.yale.edu/ec439/mosk.pdf),
+The hypotheses are motivated by [time-series momentum](https://www.aqr.com/Insights/Research/Journal-Article/Time-Series-Momentum),
 [French's prior-2-to-12-month momentum construction](https://mba.tuck.dartmouth.edu/pages/faculty/ken.French/Data_Library/det_10_port_form_pr_12_2_daily.html),
 [weekly reversal](https://www.nber.org/papers/w2533) and
 [execution-cost evidence](https://pages.stern.nyu.edu/~afrazzin/pdf/Trading%20Cost%20of%20Asset%20Pricing%20Anomalies%20-%20Frazzini,%20Israel%20and%20Moskowitz.pdf).
@@ -132,3 +133,30 @@ These ETF adaptations do not replicate those papers. Sector coverage comes from
 the [fund provider's eleven-sector suite](https://www.ssga.com/us/en/individual/capabilities/equities/sector-investing/select-sector-etfs).
 Historical LLM [look-ahead bias](https://arxiv.org/abs/2309.17322) remains a reason
 to use prospective shadow tests before attributing an economic edge to agents.
+
+## Prospective observation phase
+
+Record all 23 funds' four fixed single-asset signals, rather than only the
+descriptive historical winner, after each newly completed New York market day.
+Record sector-rotation membership separately. The daily journal freezes 320
+completed bars per fund, hashes, rules, source-code identity and capture time;
+forecasts are never overwritten once complete. Missing days are not backfilled.
+
+The macOS service runs at login and daily 14:45 local time (17:45 New York with
+this Mac set to Los Angeles). Capture refuses weekends, pre-16:30 New York
+execution and data missing the current session. Adjust calendar jobs if the
+Mac's timezone changes. First capture can be pending today's close at setup.
+
+Evaluate forecast horizons of 5, 20 and 63 sessions beginning at the first
+session strictly after the actual capture date, using its adjusted open. Entry
+counts as session one. Fresh entry/exit prices use one consistent adjustment
+basis. Store asset returns, the same-date SPY reference, Long/Hold direction and
+raw/relative directional scores. These overlap, remain correlated, omit trading
+costs and sizing, and are not a compounded portfolio or broker fills. Future
+asset outcomes cannot be established at setup; the journal accumulates them.
+
+This captures fresh **rule** forecasts. The existing Alpaca baseline separately
+forward-tests full-agent recommendations. The two historical agent grids remain
+diagnostics; this phase does not yet supply a prospectively paired LLM ablation
+with identical archived news/filing/social inputs. No recommendation is promoted
+into the paper account from the historical ranking.
