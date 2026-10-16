@@ -54,7 +54,7 @@ function createCard(ticker) {
     <div class="card-agent-bar" data-progress>Ready for research</div><div class="agent-pills" data-pills></div>
     <div class="chart-container" data-chart><span class="muted">Loading Yahoo price data…</span></div>
     <div class="card-decision" data-decision></div><div class="card-plan" data-plan></div><div class="card-plan" data-live></div>
-    <div class="trade-bar"><div class="trade-controls"><label for="shares-${esc(ticker)}" class="muted">Shares</label><input type="number" class="trade-input" id="shares-${esc(ticker)}" min="1" max="1000000" step="1" placeholder="1" value="1"><button class="btn-buy" data-action="BUY" data-ticker="${esc(ticker)}">Paper buy</button><button class="btn-sell" data-action="SELL" data-ticker="${esc(ticker)}">Paper sell</button></div><div class="trade-position" data-position></div></div>
+    <p class="card-note">Manual local simulator · separate from Alpaca</p><div class="trade-bar"><div class="trade-controls"><label for="shares-${esc(ticker)}" class="muted">Shares</label><input type="number" class="trade-input" id="shares-${esc(ticker)}" min="1" max="1000000" step="1" placeholder="1" value="1"><button class="btn-buy" data-action="BUY" data-ticker="${esc(ticker)}">Local buy</button><button class="btn-sell" data-action="SELL" data-ticker="${esc(ticker)}">Local sell</button></div><div class="trade-position" data-position></div></div>
     <div class="report-actions"><label for="history-${esc(ticker)}" class="muted">Reports</label><select id="history-${esc(ticker)}" data-history aria-label="Saved ${esc(ticker)} reports"><option value="">No saved reports</option></select><button class="btn" data-action="report" data-ticker="${esc(ticker)}">Open report</button></div>`;
   $('#grid').appendChild(card);
   loadQuote(ticker);
@@ -123,12 +123,12 @@ async function refresh() {
       const version = JSON.stringify(latest);
       if (!versions.has(ticker) || versions.get(ticker) !== version) {
         versions.set(ticker,version);
-        card.querySelector('[data-decision]').innerHTML = latest ? `<span class="paper-badge">${esc(latest.rating)}</span><p class="decision-reasoning">${esc(latest.decision)}</p>` : '<p class="muted">No research decision yet. Enable an Alpaca cycle above to automate paper testing.</p>';
+        card.querySelector('[data-decision]').innerHTML = latest ? `<span class="paper-badge">${esc(latest.rating)}</span><p class="decision-reasoning">${esc(latest.decision)}</p>` : '<p class="muted">No completed research decision yet.</p>';
         card.querySelector('[data-plan]').innerHTML = latest?.plan ? `<details><summary>Trader’s proposed plan</summary><pre>${esc(latest.plan)}</pre></details>` : '';
         loadHistory(ticker);
       }
       const pos = desk.portfolio.positions.find(p=>p.ticker===ticker);
-      card.querySelector('[data-position]').textContent = pos ? `Paper holding: ${pos.quantity} shares · average cost ${dollars(pos.basis/pos.quantity)}` : 'No paper position';
+      card.querySelector('[data-position]').textContent = pos ? `Manual simulator: ${pos.quantity} shares · average cost ${dollars(pos.basis/pos.quantity)}` : 'No manual simulator position';
       for (const side of ['BUY','SELL']) card.querySelector(`[data-action="${side}"]`).disabled = busyTrades.has(ticker) || (side==='SELL' && !pos);
     }
   } catch (error) { $('#connection').textContent = 'Connection unavailable — retrying'; }
