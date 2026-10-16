@@ -160,3 +160,30 @@ forward-tests full-agent recommendations. The two historical agent grids remain
 diagnostics; this phase does not yet supply a prospectively paired LLM ablation
 with identical archived news/filing/social inputs. No recommendation is promoted
 into the paper account from the historical ranking.
+
+## Short-horizon success criterion — 2026-10-16
+
+The user's target is to beat random decisions on short trades. The working
+horizon is **one to five trading sessions**, rather than a long-term annual
+return target. This is an evaluation preference, not evidence of an edge.
+
+A useful prospective comparison must keep the company universe, decision and
+entry times, holding deadlines, position budgets, exposure limits, abstention
+rate and cost assumptions matched. For a long-only strategy, random long/cash
+entries are an appropriate control; a random shorting strategy changes the
+trading rules. Retain an always-long reference so favorable market drift is
+visible. Freeze decisions and the evaluation rule before their outcomes.
+
+Assess net trade payoff, average winning and losing trades, drawdowns and
+performance against the matched random control. A raw hit rate above 50% is
+not sufficient: trade sizes, win/loss magnitudes, costs and the random
+control's base rate matter. Shared market dates and overlapping positions
+must remain visible when assessing uncertainty.
+
+The completed native five-session forecast scores measure SPY-relative
+direction, not profitable-trade frequency or a timed portfolio. The existing
+Alpaca baseline has daily research but **no fixed maximum holding period**;
+daily review does not guarantee a five-session exit. A future short-horizon
+portfolio test must explicitly enforce its entry/exit policy. The current
+paper account's execution rules remain unchanged. No new model grid, random
+portfolio sweep or broker execution change was started by recording this goal.
