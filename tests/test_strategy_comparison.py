@@ -58,6 +58,19 @@ def test_first_session_loss_is_not_omitted_from_drawdown():
     assert result["fill_count"] == 1
 
 
+def test_rotation_entry_target_uses_slots_without_overallocating():
+    days = pd.bdate_range("2024-01-02", periods=2)
+    prices = pd.DataFrame(100.0, index=days, columns=list("ABCDEFGHIJK"))
+    active = pd.DataFrame(False, index=days, columns=prices.columns)
+    active.loc[:, list("ABCDE")] = True
+    result = comparison.simulate(prices, prices, active, 0.4, 0, target_weight=0.1)
+    assert result["fill_count"] == 4
+    assert result["average_exposure_pct"] == pytest.approx(40)
+    assert all(fill["units"] == 100 for fill in result["fills"])
+    with pytest.raises(ValueError, match="target"):
+        comparison.simulate(prices, prices, active, 0.4, 0, target_weight=0.5)
+
+
 @pytest.mark.parametrize("corruption", ["gap", "warmup_gap", "nan", "duplicate"])
 def test_incomplete_or_invalid_data_is_rejected(prices, corruption):
     if corruption == "gap":

@@ -69,3 +69,66 @@ snapshot can be lost on a crash. Keep the Mac logged in, online and plugged in.
 The working recommendation is a hybrid: agents interpret evidence; ordinary
 code enforces portfolio limits, quote freshness, order validity and duplicate
 protection. More agents or sources earn their place through measured improvement.
+
+# Sector and strategy study — fixed extension, 2026-10-16
+
+This extension was specified before calculating its ETF rankings. It adds:
+
+- All eleven sector ETFs: XLB, XLC, XLE, XLF, XLI, XLK, XLP, XLRE, XLU, XLV, XLY.
+- Size/style and other assets: SPY, QQQ, IWM, IWD, IWF, EFA, EEM, SHY, IEF, TLT,
+  GLD, DBC. Overlapping equity exposures are not independent asset classes.
+- Fixed single-ETF rules: buy-and-hold control, 50/200-session moving-average
+  trend, positive 252-session absolute momentum, and long/cash prior-week
+  reversal. The last is a long-only timing adaptation, not an academic
+  cross-sectional long/short replication.
+- A sector basket control and monthly membership rotation into up to four
+  sectors with the strongest positive return from 252 to 21 sessions ago.
+  Existing holdings are not resized at each rebalance. Calendar-period labels
+  are published at the first available trading close on or after the label,
+  then execute at the next session open; non-session period ends can add a lag.
+- Development: 2022-11-01..2024-12-31; validation: 2025-01-02..2025-12-31;
+  evaluation: 2026-01-02..2026-10-15. Every slice is retrospective and resets
+  capital to $100,000. Markets in the evaluation slice were previously observed;
+  it is not a pristine unseen holdout. Parameters remain fixed across slices.
+- 252 prior market sessions, frozen adjusted OHLC and hashes, previous-close
+  signals, next-open fills, 5/20 bps adverse slippage, no shorts or leverage.
+  Single-ETF sleeves start with up to 40% exposure and 60% uninvested cash.
+  Sector basket entry weights are 40%/11; rotation entries target 10% per
+  selected sector under a 40% purchase ceiling. Holdings can drift; these are
+  common initial maximum budgets, not constant or identical realized risk.
+- 23 funds x 4 rules x 3 windows x 2 costs plus 2 sector portfolio rules x
+  3 windows x 2 costs: **564 simulations**. Cash earns no interest; SHY is an
+  explicit short-duration bond reference, not risk-free cash. Adjusted units,
+  omitted taxes/commissions/liquidity/market impact and final exit costs follow
+  the earlier simulator's limits.
+
+Assess excess return against each fund's matching buy-and-hold sleeve, drawdown,
+exposure, turnover, zero-cash-rate Sharpe, sensitivity to costs and consistency
+across windows. A descriptive forward-test shortlist requires positive excess
+return in both validation and evaluation at the higher cost, and no worse
+drawdown in either slice. Searching many correlated cases creates selection
+bias. A shortlist has no statistical significance claim and triggers no orders.
+
+The agent extension adds GOOGL (communications), AMZN (consumer discretionary),
+NEE (utilities), PLD (real estate) and LIN (materials), using the original five
+dates and both configurations. This is another **50 native decisions**, bringing
+the two independent studies to 130 decisions across 13 companies and all eleven
+current sector labels. It cannot establish a best sector from five correlated
+dates per company. Both studies keep their own frozen manifests and checkpoints.
+
+Deterministic forecast sidecars use the saved native companies/dates and verify
+their frozen price hashes. They pair resolved recommendations from both agent
+variants on the same cells and use common frozen outcomes. Inactive long-only
+rules are Hold, not short recommendations. Direction-times-alpha is a forecast
+score, not an executable trading return. Original native outcome precision and
+source snapshots can differ. The running native manifests and memory logs stay
+untouched by sidecar calculation.
+
+The hypotheses are motivated by [time-series momentum](https://fairmodel.econ.yale.edu/ec439/mosk.pdf),
+[French's prior-2-to-12-month momentum construction](https://mba.tuck.dartmouth.edu/pages/faculty/ken.French/Data_Library/det_10_port_form_pr_12_2_daily.html),
+[weekly reversal](https://www.nber.org/papers/w2533) and
+[execution-cost evidence](https://pages.stern.nyu.edu/~afrazzin/pdf/Trading%20Cost%20of%20Asset%20Pricing%20Anomalies%20-%20Frazzini,%20Israel%20and%20Moskowitz.pdf).
+These ETF adaptations do not replicate those papers. Sector coverage comes from
+the [fund provider's eleven-sector suite](https://www.ssga.com/us/en/individual/capabilities/equities/sector-investing/select-sector-etfs).
+Historical LLM [look-ahead bias](https://arxiv.org/abs/2309.17322) remains a reason
+to use prospective shadow tests before attributing an economic edge to agents.

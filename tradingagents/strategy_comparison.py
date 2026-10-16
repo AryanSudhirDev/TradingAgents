@@ -176,8 +176,10 @@ def historical_bounds(start, end):
     return start, end
 
 
-def prepare_prices(frames, tickers, start, end):
+def prepare_prices(frames, tickers, start, end, warmup_sessions=200):
     start, end = historical_bounds(start, end)
+    if type(warmup_sessions) is not int or warmup_sessions < 200:
+        raise ValueError("Use at least 200 whole warm-up sessions.")
     cleaned = {}
     for ticker in dict.fromkeys([*tickers, "SPY"]):
         frame = frames[ticker].copy()
@@ -194,9 +196,9 @@ def prepare_prices(frames, tickers, start, end):
     sessions = cleaned["SPY"].loc[str(start):str(end)].index
     if len(sessions) < 2:
         raise ValueError("The requested range needs at least two market sessions.")
-    warmup = cleaned["SPY"].loc[cleaned["SPY"].index < sessions[0]].tail(200).index
-    if len(warmup) < 200:
-        raise ValueError("SPY needs 200 warm-up sessions before the first trade.")
+    warmup = cleaned["SPY"].loc[cleaned["SPY"].index < sessions[0]].tail(warmup_sessions).index
+    if len(warmup) < warmup_sessions:
+        raise ValueError(f"SPY needs {warmup_sessions} warm-up sessions before the first trade.")
     required = warmup.append(sessions)
     for ticker, frame in cleaned.items():
         if not required.isin(frame.index).all():
@@ -215,12 +217,16 @@ def prepare_prices(frames, tickers, start, end):
     return opens.loc[sessions], closes.loc[sessions], {k: v.loc[sessions] for k, v in signals.items()}, cleaned
 
 
-def simulate(opens, closes, signals, allocation, slippage_bps):
+def simulate(opens, closes, signals, allocation, slippage_bps, target_weight=None):
     """Fractional adjusted-price units, next-open fills, sell before buy; no rebalancing."""
     if not 0 <= allocation <= 1 or not 0 <= slippage_bps <= 100:
         raise ValueError("Allocation must be 0..1 and slippage 0..100 basis points.")
     cash, units, fills, curve = INITIAL_EQUITY, dict.fromkeys(signals.columns, 0.0), [], []
     target = min(0.10, allocation / len(units)) if len(units) > 1 else allocation
+    if target_weight is not None:
+        if not 0 <= target_weight <= allocation:
+            raise ValueError("The per-position entry target must be within the portfolio allocation.")
+        target = target_weight
     slip = slippage_bps / 10_000
     for day, active in signals.iterrows():
         opening = opens.loc[day]
