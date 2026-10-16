@@ -198,6 +198,45 @@ cp .env.example .env
 
 ### CLI Usage
 
+#### Use a ChatGPT Plus/Pro subscription
+
+For a locally run open-source installation, the `chatgpt` provider uses OpenAI's
+[Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source)
+flow. Eligible Plus/Pro accounts can authorize requests against their ChatGPT
+plan without an OpenAI API key:
+
+```bash
+pip install ".[chatgpt]"
+tradingagents chatgpt login
+tradingagents chatgpt models
+TRADINGAGENTS_LLM_PROVIDER=chatgpt tradingagents
+```
+
+Finish sign-in and approve ChatGPT plan usage in the browser. The model picker
+reads the signed-in account's available models. For unattended runs, also set
+`TRADINGAGENTS_QUICK_THINK_LLM` and `TRADINGAGENTS_DEEP_THINK_LLM` to model IDs
+listed by `tradingagents chatgpt models`, along with the other headless settings
+below. A tier can use this provider on its own through
+`TRADINGAGENTS_QUICK_THINK_PROVIDER=chatgpt` or `TRADINGAGENTS_DEEP_THINK_PROVIDER=chatgpt`.
+
+Registrations and tokens are stored in `~/.tradingagents/chatgpt/auth.json`,
+with owner-only permissions on Unix. Token refresh is automatic and serialized
+across runs. `tradingagents chatgpt accounts` lists saved registrations;
+`tradingagents chatgpt login --new-account` adds one, and
+`tradingagents chatgpt login --account <client_id>` selects and reconnects it.
+`tradingagents chatgpt logout` signs out the active account.
+
+Requests use the public Responses API with streaming and `store=false`.
+Custom backend URLs, temperature and output-token caps are unavailable on this
+route. Plan usage limits still apply; manage them in
+[ChatGPT Settings → Usage](https://chatgpt.com/settings/usage).
+The provider never falls back to API-key billing. OpenAI's current
+[preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+and account eligibility apply. Paid or remotely hosted products require
+separate access from OpenAI.
+
+#### Run an analysis
+
 Launch the interactive CLI:
 ```bash
 tradingagents          # installed command
