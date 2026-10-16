@@ -82,6 +82,9 @@ def sanitize(prefs: dict, asset_type) -> dict:
         if isinstance(prefs.get("backend_url"), str) and prefs["backend_url"]:
             kept["backend_url"] = prefs["backend_url"]
         for field, mode in (("quick_think_llm", "quick"), ("deep_think_llm", "deep")):
+            if base == "chatgpt" and isinstance(prefs.get(field), str):
+                kept[field] = prefs[field]  # Checked against the account's catalog when picking.
+                continue
             try:
                 offered = {model for _, model in get_model_options(base, mode)}
             except KeyError:

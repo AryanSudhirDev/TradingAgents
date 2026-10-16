@@ -312,13 +312,25 @@ def _select_model(provider: str, mode: str, default=None) -> str:
             "Please enter a deployment name.",
         )
 
+    if provider.lower() == "chatgpt":
+        from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError, list_models
+        try:
+            options = list_models()
+            if not options:
+                raise ChatGPTAuthError("No models are available for this ChatGPT account.")
+        except ChatGPTAuthError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+    else:
+        options = get_model_options(provider, mode)
+
     choice = questionary.select(
         f"Select Your [{mode.title()}-Thinking LLM Engine]:",
         choices=[
             questionary.Choice(display, value=value)
-            for display, value in get_model_options(provider, mode)
+            for display, value in options
         ],
-        default=_matching_choice(get_model_options(provider, mode), default),
+        default=_matching_choice(options, default),
         instruction="\n- Use arrow keys to navigate\n- Press Enter to select",
         style=questionary.Style(
             [
@@ -361,6 +373,7 @@ def _llm_provider_table() -> list[tuple[str, str, str | None]]:
     ollama_url = os.environ.get("OLLAMA_BASE_URL") or "http://localhost:11434/v1"
     return [
         ("OpenAI", "openai", "https://api.openai.com/v1"),
+        ("ChatGPT Plus/Pro (subscription)", "chatgpt", None),
         ("Google", "google", None),
         ("Anthropic", "anthropic", "https://api.anthropic.com/"),
         ("xAI", "xai", "https://api.x.ai/v1"),
@@ -635,6 +648,16 @@ def ensure_api_key(provider: str) -> str | None:
     Returns None for providers that do not require a key (e.g. ollama)
     and for providers not found in the canonical mapping.
     """
+    if provider.lower() == "chatgpt":
+        from tradingagents.llm_clients.chatgpt_auth import ChatGPTAuthError, access_token
+        try:
+            access_token()
+        except ChatGPTAuthError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(code=1) from None
+        console.print("[green]Using ChatGPT plan[/green] · Manage usage: https://chatgpt.com/settings/usage")
+        return None
+
     env_var = get_api_key_env(provider)
     if env_var is None:
         return None  # ollama / unknown — no key check possible

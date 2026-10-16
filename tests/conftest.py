@@ -90,6 +90,12 @@ def _own_cli_prefs(tmp_path, monkeypatch):
     monkeypatch.setattr("cli.prefs._PREFS_PATH", tmp_path / "cli_prefs.json")
 
 
+@pytest.fixture(autouse=True)
+def _own_chatgpt_auth(tmp_path, monkeypatch):
+    """Never read or replace the user's subscription credentials in a test."""
+    monkeypatch.setattr("tradingagents.llm_clients.chatgpt_auth._AUTH_PATH", tmp_path / "chatgpt" / "auth.json")
+
+
 _API_KEY_ENV_VARS = (
     "OPENAI_API_KEY",
     "GOOGLE_API_KEY",
