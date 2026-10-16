@@ -357,7 +357,7 @@ with its virtual environment, after any active research has finished:
 .venv/bin/python -m tradingagents.dashboard.operations install
 ```
 
-This installs two private per-user LaunchAgents. `dev.tradingagents.dashboard`
+This installs three private per-user LaunchAgents. `dev.tradingagents.dashboard`
 starts at login and restarts after process exit; `caffeinate -s` prevents idle
 system sleep while connected to AC power. The display can still sleep. After a
 reboot you must log in; a powered-off Mac, closed lid, forced sleep, lost network
@@ -654,6 +654,56 @@ exploratory: model training leakage, missing old text, selected surviving
 companies and shared market dates prevent treating these cells as independent
 proof of a trading edge. The daily paper account already uses the full agent
 team, with fixed execution controls; comparisons do not change that account.
+
+### Sector strategy lab and prospective journal
+
+Open **http://127.0.0.1:8000/experiments** from the dashboard's **Strategy lab**
+link. It reads saved experiments without calling models, fetching prices or
+submitting orders. Choose a historical slice, cost assumption and return or
+drawdown view; exposure, activity and risk details are expandable.
+
+```bash
+# Fixed 23-fund / 11-sector study: 564 simulations, no models or broker calls.
+.venv/bin/python -m tradingagents.sector_study
+
+# Read a native study's frozen inputs; write an isolated deterministic sidecar.
+.venv/bin/python -m tradingagents.agent_benchmarks /absolute/native/study/folder
+
+# Capture only after New York's close, then score previously captured signals.
+.venv/bin/python -m tradingagents.strategy_shadow run
+```
+
+The fixed rules, chronological slices, costs, assumptions and research sources
+are in [EXPERIMENTS.md](EXPERIMENTS.md). Price inputs, plan hashes, curves and
+fills stay private under `~/.tradingagents/experiments/sectors/`. The lab compares
+each single-fund rule with its own 40%-entry buy-and-hold sleeve. Sector rotation
+has different entry weights from the all-sector basket, and holdings drift.
+Every historical slice is exploratory; the evaluation period is not a pristine
+unseen holdout. A descriptive consistency shortlist never changes execution.
+
+The native comparison pairs both agent teams and deterministic forecasts on
+identical resolved company/date cells using verified frozen prices. It reports
+forecast-direction scores, not executable portfolio returns. Pending and
+unreadable decisions remain visible. Mixed horizons, overlapping studies and
+different model/data settings are excluded from pooled scores.
+
+The service installer also adds `dev.tradingagents.strategy-shadow`, at login
+and daily **14:45 in the Mac's local timezone** (17:45 New York when the Mac is
+set to Los Angeles). It captures 92 fixed fund/rule forecasts per completed
+market day plus sector membership, with private immutable daily inputs and
+hashes under `~/.tradingagents/experiments/shadow/`. Before 16:30 New York,
+weekends and missing current-session data produce no backdated prediction.
+If the Mac's timezone changes, adjust/reinstall the calendar jobs to remain
+after New York's close. A missed day is not backfilled.
+
+Outcomes use the next session's adjusted open and 5, 20 or 63 sessions,
+including entry as session one. Both endpoints use the same newly fetched
+adjustment basis; rescoring may reflect vendor revisions. Overlapping forecast
+scores are correlated and not compounded into portfolio P&L. Local timestamps
+are not independent attestations. This journal calls no models or brokers;
+it tests fresh price-rule forecasts while the separate agent-driven Alpaca
+baseline continues. Broader historical agent studies are still subject to
+training leakage and incomplete text. Keep this Mac logged in and online.
 
 ## Reproducibility
 
