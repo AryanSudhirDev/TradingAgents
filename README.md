@@ -571,6 +571,90 @@ tradingagents backtest NVDA,AAPL --start 2026-06-01 --end 2026-08-01 --every 7
 
 Each cell is scored on realized alpha against the instrument's regional benchmark, grouped by rating. Your own memory log is never written to, and re-running the same grid with `run_id=result.run_id` skips the cells that already ran, so an interrupted sweep continues where it stopped.
 
+To compare portfolio behavior of simple price rules separately from the agent
+decision evaluator:
+
+```bash
+.venv/bin/python -m tradingagents.strategy_comparison \
+  --tickers AAPL,MSFT,NVDA,JPM --start 2023-01-03 --end 2026-10-15
+```
+
+This runs buy-and-hold, a 50/200-session moving-average trend rule, and positive
+126-session momentum, plus cash and SPY references. All signals are shifted to
+the following session's open. Each strategy starts with $100,000; basket entries
+target up to 10% per company under a 40% purchase-exposure ceiling, with no daily
+rebalancing. Holdings can drift above those percentages. SPY is shown both at
+the basket's matched initial allocation and at 100% exposure. The latter has a
+different risk budget. Runs compare 5 and 20 basis points of adverse slippage per
+fill and report total return, CAGR, daily-close maximum drawdown, average exposure
+and fill count. No parameter search or automatic strategy promotion is performed.
+
+These are fractional **adjusted-price return simulations**, not historical
+broker shares or the Alpaca limit-order policy. Yahoo dividend/split-adjusted
+OHLC is used; commissions, taxes, cash interest, liquidity and market impact are
+omitted. Open positions are valued at the final close without exit costs. An
+entirely completed historical range and 200 warm-up sessions are required;
+missing prices or benchmark sessions fail instead of being filled. The selected
+companies are chosen today, so survivorship/selection bias remains. The results
+do not measure TradingAgents' performance or establish future profitability.
+
+Every run saves private input CSVs, their SHA-256 hashes, full simulated fills,
+equity curves, assumptions, `results.json` and `report.html` under
+`~/.tradingagents/experiments/strategies/`. The frozen CSVs support reproducing
+the calculation independently of later Yahoo revisions. Paper account settings,
+credentials, holdings and the live memory log are untouched.
+
+To compare the actual native agent pipeline, add `--agents`. Start with a small
+grid because this calls the configured models twice per ticker/date:
+
+```bash
+.venv/bin/python -m tradingagents.strategy_comparison --agents \
+  --tickers NVDA --start 2026-10-02 --end 2026-10-02
+```
+
+This compares a market-only analyst configuration with all four analysts; both
+retain the bull/bear, trader and risk/portfolio-manager stages. It uses the native
+five-session decision scoring, not a carried portfolio. Experiments have separate
+memory logs and checkpoint caches under `~/.tradingagents/experiments/agents/`.
+Completed cells also export the engine's full research report, including its
+model settings, in HTML and text beside each variant's memory log.
+One bounded retry reuses the native run ID, skips completed cells and resumes a
+failed cell when checkpointing is enabled. Original failures remain in the
+attempt history. Historical text coverage is incomplete, model training may
+contain later events, and a single model sample per cell is not a blind historical
+test. Treat a small grid as an execution/coverage diagnostic; compare configurations
+prospectively before changing paper execution. The existing native backtest API
+can continue a saved run by reusing its experiment results directory and run ID.
+After the prior process stops, the comparison command can also continue that
+same folder with `--agents --resume /absolute/path/to/experiment` and the original
+companies, dates and model settings. It keeps the earlier failures in the attempt
+history. Remaining cell or settlement failures cause a nonzero command exit.
+
+For a broader, fixed comparison, `--every` controls the calendar spacing of
+analysis dates. This example runs eight companies at five quarterly dates
+(2025-10-06, 2026-01-05, 2026-04-06, 2026-07-06 and 2026-10-05), or 80 native
+decisions across the two configurations:
+
+```bash
+.venv/bin/python -m tradingagents.strategy_comparison --agents \
+  --tickers AAPL,MSFT,NVDA,JPM,XOM,UNH,WMT,CAT \
+  --start 2025-10-06 --end 2026-10-05 --every 91
+```
+
+Choose actual exchange sessions with completed outcome windows; the date grid
+does not skip holidays automatically. Each cell start updates private
+`results.json` with its active company/date, completed summary, elapsed time and
+observed model/tool calls and tokens. Usage includes retries and reflection,
+but interrupted responses can omit token counts; these are not dollar costs or
+a conversion to ChatGPT subscription credits. Completed calls from before this
+instrumentation are excluded. Only one process can hold an experiment at a time.
+An interrupted process can resume its original folder with the same command plus
+`--resume`; completed decisions are skipped. A wider historical study remains
+exploratory: model training leakage, missing old text, selected surviving
+companies and shared market dates prevent treating these cells as independent
+proof of a trading edge. The daily paper account already uses the full agent
+team, with fixed execution controls; comparisons do not change that account.
+
 ## Reproducibility
 
 TradingAgents is LLM-driven, so two runs of the same ticker and date can differ. This is expected for a research tool built on language models, not a defect. The variation comes from a few distinct sources, and it helps to separate them.

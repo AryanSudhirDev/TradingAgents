@@ -190,6 +190,19 @@ def test_the_analysts_run_at_the_same_time(tmp_path, monkeypatch, offline):
 
 
 @pytest.mark.unit
+def test_callbacks_count_real_model_and_tool_calls_once(tmp_path, monkeypatch, offline):
+    from cli.stats_handler import StatsCallbackHandler
+
+    stats = StatsCallbackHandler()
+    model = ScriptedModel(callbacks=[stats])
+    graph = _graph(tmp_path, monkeypatch, model)
+    graph.callbacks = [stats]
+    graph.propagate("NVDA", TRADE_DATE)
+    assert stats.llm_calls == len(model.calls)
+    assert stats.tool_calls > 0
+
+
+@pytest.mark.unit
 def test_a_debug_run_prints_the_analysts_work_and_reaches_the_same_decision(tmp_path, monkeypatch, offline, capsys):
     """Debug mode streams the analysts' own graphs, so their tool calls still print."""
     graph = _graph(tmp_path, monkeypatch, ScriptedModel(), debug=True)

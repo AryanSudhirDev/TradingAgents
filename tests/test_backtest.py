@@ -44,6 +44,7 @@ class _FakeGraph:
     def __init__(self, selected_analysts=None, config=None, **kw):
         self.analysts = list(selected_analysts) if selected_analysts else None
         self.config = config
+        self.callbacks = kw.get("callbacks")
         self.memory_log = TradingMemoryLog(config)
         self.calls = []
         self.settled = []
@@ -151,6 +152,12 @@ def test_the_analyst_set_under_test_is_the_one_that_runs(tmp_path):
     """A backtest of a two-analyst setup must not silently run four."""
     run_backtest(["NVDA"], ["2026-01-05"], _config(tmp_path), selected_analysts=["market", "news"])
     assert _FakeGraph.instances[-1].analysts == ["market", "news"]
+
+
+def test_model_usage_callbacks_reach_the_native_graph(tmp_path):
+    callbacks = [object()]
+    run_backtest(["NVDA"], ["2026-01-05"], _config(tmp_path), callbacks=callbacks)
+    assert _FakeGraph.instances[-1].callbacks is callbacks
 
 
 @pytest.mark.unit
