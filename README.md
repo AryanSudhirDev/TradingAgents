@@ -254,6 +254,53 @@ Each flag skips only its own question. Run without a terminal, a missing answer 
 
 A saved report also includes `complete_report.html`, the report as one page with its sections listed beside the text, for reading in a browser, on a phone or in print. Answering the save question at the prompt also asks about the page and can open it in your browser; `--no-html` skips it, and so does `ta.save_reports(state, "NVDA", html=False)` from Python.
 
+### Local research dashboard and paper portfolio
+
+The optional local dashboard adds a persistent US-stock/ETF watchlist, Yahoo price
+charts, live analysis progress, saved daily reports, proposed trade plans, and a
+separate paper portfolio. It uses this checkout's engine and configured models,
+including the `chatgpt` subscription provider:
+
+```bash
+pip install -e ".[chatgpt,dashboard]"
+tradingagents-dashboard
+```
+
+Open `http://127.0.0.1:8000`. Use `--port 8001` if that port is occupied.
+The server binds only to loopback. Adding a ticker does not call a model;
+**Analyze** starts one full analysis, with one analysis allowed at a time.
+The decision agents receive the current paper holdings and cash at the start
+of that run. Historical CLI reports also appear in the dashboard.
+
+The paper portfolio starts with **$100,000 virtual USD**, supports whole-share
+long positions, and records buys/sells only when you click a paper-trade button.
+It has no brokerage connection. Fills use the latest available Yahoo daily-bar
+price, which can be a partial bar during market hours; fees and slippage are
+not modeled. Price dates are shown beside charts, positions and fills. Cash,
+cost basis and realized P&L use integer cents with transactional writes and
+duplicate-submission protection. State lives in
+`~/.tradingagents/dashboard/paper.sqlite3`; the UI shows the last 100 fills.
+Daily research history follows the engine's existing one-state-per-ticker/date
+logs, while complete timestamped reports are also saved on disk.
+
+A practical workflow is to keep a small watchlist, analyze after meaningful
+news or once per session, read the bull/bear and risk reports, and manually
+select ideas to track on paper. Measure outcomes against a simple benchmark
+and the same models without debate before assuming the extra model calls help.
+The engine's decision-memory/backtest scores are separate from the paper
+portfolio's cash and fill ledger.
+
+Current social inputs are Yahoo headlines, StockTwits and Reddit RSS. There is
+no X/Twitter feed or streaming quote connection. FRED needs its own key, and
+source outages and incomplete historical social coverage still apply.
+
+The interface styling is adapted from
+[flo007ro's community dashboard](https://github.com/flo007ro/TradingAgents/tree/06610d7aad93b6bf42528d248199a1d18c73c901)
+under Apache-2.0; see `tradingagents/dashboard/NOTICE`. Its backend, paper ledger
+and browser application have been replaced to use the current engine, real
+outputs and this installation's saved configuration. This is a local community
+interface, separate from Tauric Research's hosted services.
+
 ### Markets and tickers
 
 TradingAgents works with any market Yahoo Finance covers, using the exchange-suffixed ticker. Company identity and the alpha benchmark resolve automatically per market.
