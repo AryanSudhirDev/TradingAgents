@@ -1,0 +1,10 @@
+TradingAgents Research Desk
+
+The dashboard styling and visual layout are adapted from the community dashboard
+by GitHub contributor flo007ro, in flo007ro/TradingAgents at commit
+06610d7aad93b6bf42528d248199a1d18c73c901, distributed under Apache License 2.0.
+Source: https://github.com/flo007ro/TradingAgents/tree/06610d7aad93b6bf42528d248199a1d18c73c901
+
+The local backend, transactional paper ledger, current-engine integration and
+browser application code have been replaced for this installation. This is a
+community-derived interface, not Tauric Research's hosted product.

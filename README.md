@@ -254,6 +254,162 @@ Each flag skips only its own question. Run without a terminal, a missing answer 
 
 A saved report also includes `complete_report.html`, the report as one page with its sections listed beside the text, for reading in a browser, on a phone or in print. Answering the save question at the prompt also asks about the page and can open it in your browser; `--no-html` skips it, and so does `ta.save_reports(state, "NVDA", html=False)` from Python.
 
+### Local research dashboard and paper portfolio
+
+The optional local dashboard adds a persistent US-stock/ETF watchlist, Yahoo price
+charts, live analysis progress, saved daily reports, proposed trade plans, and a
+local simulator plus optional automated Alpaca paper orders. It uses this checkout's engine and configured models,
+including the `chatgpt` subscription provider:
+
+```bash
+pip install -e ".[chatgpt,dashboard]"
+tradingagents-dashboard
+```
+
+Open `http://127.0.0.1:8000`. Use `--port 8001` if that port is occupied.
+The server binds only to loopback. Adding a ticker does not call a model;
+**Analyze** starts one full analysis, with one analysis allowed at a time.
+Manual analyses receive the local simulator's holdings and cash; automated
+cycles receive the Alpaca paper account's book. Historical CLI reports also
+appear in the dashboard.
+
+The paper portfolio starts with **$100,000 virtual USD**, supports whole-share
+long positions, and records buys/sells only when you click a paper-trade button.
+These manual buttons never send broker orders. Fills use the latest available Yahoo daily-bar
+price, which can be a partial bar during market hours; fees and slippage are
+not modeled. Price dates are shown beside charts, positions and fills. Cash,
+cost basis and realized P&L use integer cents with transactional writes and
+duplicate-submission protection. State lives in
+`~/.tradingagents/dashboard/paper.sqlite3`; the UI shows the last 100 fills.
+Daily research history follows the engine's existing one-state-per-ticker/date
+logs, while complete timestamped reports are also saved on disk.
+
+For online forward testing, enter **paper** account keys directly in the
+dashboard's password fields, then choose managed watchlist symbols and **Enable
+daily runs**. Credentials stay in a private `alpaca-paper.json` beside the local
+database. The REST host is fixed to `https://paper-api.alpaca.markets`; there is
+no live-trading mode. Use a dedicated long-only USD paper account. API connection
+alone does not enable orders. No new dependencies are needed for Alpaca.
+
+On macOS/Linux, the worker starts research at **10:00 America/New_York** on open
+market days, processes symbols serially, and catches up if started later in the
+session. **Run one cycle now** can start at the regular-session open. It checks
+Alpaca's exchange clock, including holidays and early closes, and sends no new
+orders within 30 minutes of closing. Positions carry overnight and are reviewed
+daily; there is no forced holding period or automatic stop-loss. This is
+multi-minute daily research, **not HFT**. Keep the server running and Mac awake.
+
+The fixed execution policy interprets final ratings: **Buy** targets 10% of
+equity, **Overweight** 5%, **Hold** keeps holdings, **Underweight** sells half
+(rounded up), **Sell** exits, and unreadable decisions do nothing. Buy targets
+only add shares; they do not trim positions that have appreciated. Buys use
+cash, a 10% cash reserve and a 40% total invested ceiling at sizing time. Whole
+shares only, no shorts/margin. Fresh IEX bid/ask quotes must be within five
+minutes and have at most a 1% spread. DAY limit orders allow 0.5% around the
+quoted ask/bid, with no extended-hours execution.
+
+Each account/symbol/day gets one durable attempt and a deterministic client
+order ID. A local process lock serializes workers sharing a database. Failed
+research, paused or late cycles do not submit orders. Open orders block further
+submissions. Uncertain network submissions are looked up by client ID and never
+blindly resubmitted; an unresolved missing order blocks future cycles until
+manually investigated. A failed/skipped symbol resumes on the next market day.
+Do not run separate databases against the same account. Pause prevents further
+submissions but leaves existing DAY orders at Alpaca; cancel those in Alpaca.
+
+The dashboard shows actual paper account equity, positions, order statuses,
+partial/full fills and a research/execution journal separately from the local
+manual ledger. Alpaca's simulated fills omit some live trading costs and
+liquidity effects. Measure forward outcomes against a simple benchmark
+and the same models without debate before assuming the extra model calls help.
+The engine's decision-memory/backtest scores are separate from the paper
+portfolio's cash and fill ledger.
+
+The execution selector also offers an **automatic local snapshot simulator**
+without broker keys. It has its own $100,000 ledger in `forward.sqlite3`,
+separate from both Alpaca and the card buttons' manual ledger. It uses the same
+rating/sizing policy with 0.05% adverse slippage per side, rounded to cents.
+Daily local cycles start at **16:30 America/New_York** and require a Yahoo bar
+for that date, so weekends and holidays do not produce stale-price fills.
+Run-now tests may use partial daily bars. These instant simulated fills do not
+model liquidity, latency or fees and do not substitute for broker execution.
+Switching modes pauses daily automation; run-once preserves an existing daily
+schedule. A cycle already attempted that day is not repeated.
+
+Each automated attempt saves an immutable research snapshot in the order
+journal, even if another manual analysis later overwrites the normal daily
+report. Performance samples before/after cycles persist in `paper_equity` in
+the main database. The dashboard plots cumulative account and SPY price
+returns, sampled P&L and sampled drawdown. SPY uses cached Yahoo snapshots,
+excludes dividends and may differ in timing from broker marks. These sparse
+samples cannot measure the full intraday drawdown. Run the forward test over
+multiple weeks and compare drawdown, return and execution failures before
+drawing conclusions; the initial run only verifies the plumbing.
+
+Current social inputs are Yahoo headlines, StockTwits and Reddit RSS. There is
+no X/Twitter feed or streaming quote connection. FRED needs its own key, and
+source outages and incomplete historical social coverage still apply.
+
+For unattended operation on **macOS**, run this from the configured checkout
+with its virtual environment, after any active research has finished:
+
+```bash
+.venv/bin/python -m tradingagents.dashboard.operations install
+```
+
+This installs two private per-user LaunchAgents. `dev.tradingagents.dashboard`
+starts at login and restarts after process exit; `caffeinate -s` prevents idle
+system sleep while connected to AC power. The display can still sleep. After a
+reboot you must log in; a powered-off Mac, closed lid, forced sleep, lost network
+or expired/revoked credentials can still interrupt operation. Keep this checkout
+and virtual environment at the installed location. Installing again updates the
+jobs and restarts the server; it does not reset credentials, journals or daily
+attempts. Completed attempts are never repeated, interrupted research is marked
+as failed without an order and resumes the next market day, and uncertain broker
+submissions are reconciled by their existing client IDs.
+
+`dev.tradingagents.progress` checks the dashboard at login and daily at **14:15
+in the Mac's local timezone** (17:15 New York when the Mac is set to Los Angeles).
+It creates timestamped private snapshots and consistent SQLite backups under
+`~/.tradingagents/dashboard/progress/`, including account equity, positions,
+fills, research outcomes, model settings and the existing sampled SPY comparison.
+Credentials are excluded. The check reports a stopped/stale scheduler, paused
+automation, unavailable account, failed attempts, uncertain submissions, rejected
+orders and missing research after an exchange trading day closes. Market holidays
+come from Alpaca's calendar. It only reads broker data and never submits an order.
+These are local backups, so disk loss still loses them; they are not cloud copies.
+Checks and backups accumulate for the baseline test and should be archived or
+pruned when extending it beyond the initial few weeks.
+
+Run a check now, or inspect the health endpoint without calling the broker:
+
+```bash
+.venv/bin/python -m tradingagents.dashboard.operations check
+curl --fail http://127.0.0.1:8000/api/health
+launchctl print gui/$(id -u)/dev.tradingagents.dashboard
+```
+
+The health endpoint returns 503 if the scheduler stops, stops polling for two
+minutes, or encounters a scheduler error. Temporary scheduler errors retry every
+30 seconds. The paper status line also exposes scheduler failures. Runtime logs
+are in `~/.tradingagents/logs/dashboard.console.log`; progress-check summaries are
+in `progress.console.log` in the same directory. A healthy process does not
+guarantee every upstream source is available or that an analysis will succeed.
+
+For the initial baseline, review roughly ten market sessions of run completion,
+fills, return, SPY comparison and sampled drawdown. Record any changes to models,
+managed companies or sizing rules. This period checks operation, not profitability.
+X remains disconnected during this baseline. A later X experiment should compare
+parallel recommendations using the same inputs/cutoff except for X, initially
+without changing the baseline paper account's orders.
+
+The interface styling is adapted from
+[flo007ro's community dashboard](https://github.com/flo007ro/TradingAgents/tree/06610d7aad93b6bf42528d248199a1d18c73c901)
+under Apache-2.0; see `tradingagents/dashboard/NOTICE`. Its backend, paper ledger
+and browser application have been replaced to use the current engine, real
+outputs and this installation's saved configuration. This is a local community
+interface, separate from Tauric Research's hosted services.
+
 ### Markets and tickers
 
 TradingAgents works with any market Yahoo Finance covers, using the exchange-suffixed ticker. Company identity and the alpha benchmark resolve automatically per market.
