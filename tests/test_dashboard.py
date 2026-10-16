@@ -233,6 +233,15 @@ def test_an_active_analysis_blocks_a_second_request(app):
         app.state.desk.start("NVDA")
 
 
+def test_live_stats_are_visible_before_the_first_analyst_finishes(app):
+    desk = app.state.desk
+    desk.claim("NVDA")
+    desk.stats = server.StatsCallbackHandler()
+    desk.stats.on_chat_model_start({}, [])
+    assert desk.state()["active"]["stats"]["llm_calls"] == 1
+    assert desk.state()["active"]["completed"] == []
+
+
 def test_failed_analysis_preserves_checkpoint_and_closes_it(app, monkeypatch):
     closed = []
 

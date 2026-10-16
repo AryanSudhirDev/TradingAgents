@@ -34,7 +34,7 @@ function table(headers, rows) {
 
 function renderPortfolio(book) {
   const unrealized = book.positions.reduce((sum,p)=>sum + (p.price == null ? 0 : p.quantity*p.price-p.basis),0);
-  $('#metrics').innerHTML = [['Paper equity',dollars(book.total_value)],['Virtual cash',dollars(book.cash)],['Unrealized P&L',dollars(unrealized)],['Realized P&L',dollars(book.realized)]].map(([label,value])=>`<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join('');
+  $('#metrics').innerHTML = [['Local simulator equity',dollars(book.total_value)],['Local virtual cash',dollars(book.cash)],['Unrealized P&L',dollars(unrealized)],['Realized P&L',dollars(book.realized)]].map(([label,value])=>`<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join('');
   $('#positions').innerHTML = table(['Symbol','Shares','Average cost','Mark / as of','Unrealized P&L'],book.positions.map(p=>[
     esc(p.ticker),p.quantity,dollars(p.basis/p.quantity),
     p.price == null ? 'Unavailable' : `${dollars(p.price)} <span class="muted">${esc(p.as_of)}</span>`,
@@ -123,7 +123,7 @@ async function refresh() {
       const version = JSON.stringify(latest);
       if (!versions.has(ticker) || versions.get(ticker) !== version) {
         versions.set(ticker,version);
-        card.querySelector('[data-decision]').innerHTML = latest ? `<span class="paper-badge">${esc(latest.rating)}</span><p class="decision-reasoning">${esc(latest.decision)}</p>` : '<p class="muted">No research decision yet. Paper trades are always your choice.</p>';
+        card.querySelector('[data-decision]').innerHTML = latest ? `<span class="paper-badge">${esc(latest.rating)}</span><p class="decision-reasoning">${esc(latest.decision)}</p>` : '<p class="muted">No research decision yet. Enable an Alpaca cycle above to automate paper testing.</p>';
         card.querySelector('[data-plan]').innerHTML = latest?.plan ? `<details><summary>Trader’s proposed plan</summary><pre>${esc(latest.plan)}</pre></details>` : '';
         loadHistory(ticker);
       }
@@ -181,3 +181,74 @@ $('#grid').addEventListener('click',async event=>{
 
 refresh();
 setInterval(refresh,2000);
+
+let paperPolling=false, paperState, controlBusy=false;
+function renderPerformance(p) {
+  const box=$('#paper-performance');
+  if (!p?.samples?.length) { box.innerHTML='<p class="muted">Forward performance begins with the first cycle. Strategy and SPY price returns are sampled before and after cycles.</p>'; return; }
+  const pct=value=>value==null?'Unavailable':`${value.toFixed(2)}%`;
+  const points=p.samples.map(s=>({stamp:s.stamp,strategy:(s.equity/p.initial_equity-1)*100,spy:s.benchmark && p.initial_benchmark ? (s.benchmark/p.initial_benchmark-1)*100 : null}));
+  const values=points.flatMap(s=>[s.strategy,s.spy]).filter(v=>v!=null && Number.isFinite(v));
+  const low=Math.min(0,...values), span=Math.max(...values)-low || 1;
+  const start=new Date(points[0].stamp).getTime(), duration=new Date(points.at(-1).stamp).getTime()-start || 1;
+  const x=s=>20+(new Date(s.stamp).getTime()-start)/duration*660, y=v=>140-(v-low)/span*120;
+  const line=(field,color)=>{ const usable=points.filter(s=>s[field]!=null); return `<path d="${usable.map((s,i)=>`${i?'L':'M'}${x(s).toFixed(2)},${y(s[field]).toFixed(2)}`).join(' ')}" fill="none" stroke="${color}" stroke-width="2"/>`+usable.map(s=>`<circle cx="${x(s).toFixed(2)}" cy="${y(s[field]).toFixed(2)}" r="3" fill="${color}"><title>${esc(new Date(s.stamp).toLocaleString())}: ${pct(s[field])}</title></circle>`).join(''); };
+  box.innerHTML=`<h3>Forward performance since ${esc(new Date(p.started).toLocaleString())}</h3><div class="metrics">${[['Sampled P&L since start',dollars(p.pnl)],['Strategy return',pct(p.return_pct)],['SPY price return',pct(p.spy_return_pct)],['Sampled drawdown',pct(p.drawdown_pct)]].map(([label,value])=>`<div class="metric"><span>${label}</span><strong>${value}</strong></div>`).join('')}</div><svg viewBox="0 0 700 160" style="width:100%;max-height:220px" role="img" aria-label="Strategy and SPY cumulative percentage returns">${line('strategy','#f0a500')}${line('spy','#4dd9c0')}</svg><p class="muted">Amber: strategy · Mint: SPY · ${p.count} samples. SPY uses Yahoo snapshots and excludes dividends. Drawdown is measured only at sampled times; this is not a backtest or proof of outperformance.</p>`;
+}
+async function refreshPaper() {
+  if (paperPolling) return;
+  paperPolling=true;
+  try {
+    paperState=await api('paper/status');
+    const p=paperState;
+    const local=p.mode==='local', label=local?'Local automatic simulator':'Alpaca paper';
+    $('#paper-status').textContent=`${label} ${p.connected?'connected':'unavailable'} · ${p.enabled?'Daily runs enabled':'Daily runs paused'} · ${p.busy?'Cycle running · ':''}${p.error || p.message}`;
+    $('#paper-cadence').textContent=local?'Local daily runs start at 16:30 New York time when a Yahoo bar exists for that date. Run now can use a partial daily bar. Snapshot fills include 0.05% slippage per side; fees, latency and liquidity are not modeled. This account is separate from Alpaca and the manual ledger.':'Alpaca daily research starts at 10:00 New York on market days, with no new orders in the final 30 minutes. DAY limit orders use fresh IEX quotes with a 0.5% price allowance. Alpaca reports actual paper order statuses and simulated fills. Use a dedicated paper account.';
+    $('#paper-status').classList.toggle('error',Boolean(p.error));
+    if (!p.configured && !local) $('#paper-credentials').open=true;
+    if (!controlBusy) $('#paper-mode').value=p.mode;
+    $('#paper-mode').disabled=Boolean(p.busy) || controlBusy;
+    if (!$('#auto-symbols').dataset.loaded) { $('#auto-symbols').value=p.symbols.join(','); $('#auto-symbols').dataset.loaded='1'; }
+    $('#auto-symbols').disabled=Boolean(p.busy);
+    for (const id of ['paper-enable','paper-run']) $('#'+id).disabled=controlBusy || !p.connected || p.busy;
+    $('#paper-pause').disabled=controlBusy || (!p.enabled && !p.busy);
+    const a=p.account;
+    const metrics=a?[[`${label} equity`,a.equity],['Cash',a.cash],...(a.last_equity==null?[]:[['Change since prior close',Number(a.equity)-Number(a.last_equity)]])]:[];
+    $('#broker-metrics').innerHTML=metrics.map(([name,value])=>`<div class="metric"><span>${name}</span><strong>${dollars(Math.round(Number(value)*100))}</strong></div>`).join('')+(a?`<p class="muted">Account snapshot: ${esc(new Date(p.as_of).toLocaleString())}${local?'':` · ${p.market_open?'Market open':'Market closed'}`}</p>`:'');
+    renderPerformance(p.performance);
+    $('#broker-positions').innerHTML=table([`${label} symbol`,'Shares','Average cost','Current mark','Unrealized P&L'],(p.positions || []).map(pos=>[esc(pos.symbol),esc(pos.qty),dollars(Number(pos.avg_entry_price)*100),dollars(Number(pos.current_price)*100),dollars(Number(pos.unrealized_pl)*100)]));
+    $('#paper-orders-title').textContent=local?'Local automatic fills · latest 100':'Alpaca orders · latest 100, including fills and rejections';
+    $('#broker-orders').innerHTML=table(['Submitted','Symbol','Side','Shares','Status','Filled shares','Average fill','Limit','Client order ID'],(p.orders || []).map(o=>[esc(o.submitted_at?new Date(o.submitted_at).toLocaleString():'—'),esc(o.symbol),esc(o.side),esc(o.qty),esc(o.status),esc(o.filled_qty),o.filled_avg_price?dollars(Number(o.filled_avg_price)*100):'—',o.limit_price?dollars(Number(o.limit_price)*100):'—',esc(o.client_order_id)]));
+    $('#paper-journal').innerHTML=table(['Day','Symbol','Rating','Execution','Details','Report','Client order ID'],p.runs.map(r=>[esc(r.day),esc(r.ticker),esc(r.rating || '—'),esc(r.status),esc(r.note)+(r.intent?`<br>${esc(r.intent)}`:''),r.has_report?`<a href="/api/paper/report/${encodeURIComponent(r.client_id)}" target="_blank" rel="noreferrer">Research</a>`:'—',esc(r.client_id)]));
+  } catch(error) { $('#paper-status').textContent='Paper status unavailable: '+error.message; }
+  finally { paperPolling=false; }
+}
+$('#paper-connect').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const form=event.currentTarget, button=form.querySelector('button'); button.disabled=true;
+  try {
+    await api('paper/connect',{key:form.elements.key.value.trim(),secret:form.elements.secret.value.trim()});
+    form.reset(); $('#paper-credentials').open=false;
+    toast('Alpaca paper connected. Enable daily runs or run one cycle.');
+    await refreshPaper();
+  } catch(error) { toast(error.message,true); }
+  finally { button.disabled=false; }
+});
+$('#paper-control').addEventListener('submit',async event=>{
+  event.preventDefault();
+  if (controlBusy) return;
+  controlBusy=true;
+  try {
+    await api('paper/control',{action:event.submitter.value,mode:$('#paper-mode').value,symbols:$('#auto-symbols').value.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean)});
+    toast(event.submitter.value==='pause'?'Paper automation paused. Existing orders remain at Alpaca.':'Paper cycle requested.');
+  } catch(error) { toast(error.message,true); }
+  finally { controlBusy=false; await refreshPaper(); }
+});
+$('#paper-mode').addEventListener('change',async event=>{
+  controlBusy=true;
+  try { await api('paper/control',{action:'select',mode:event.currentTarget.value}); toast('Execution mode selected. Daily runs are paused.'); }
+  catch(error) { toast(error.message,true); }
+  finally { controlBusy=false; await refreshPaper(); }
+});
+refreshPaper();
+setInterval(refreshPaper,5000);

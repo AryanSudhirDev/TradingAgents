@@ -258,7 +258,7 @@ A saved report also includes `complete_report.html`, the report as one page with
 
 The optional local dashboard adds a persistent US-stock/ETF watchlist, Yahoo price
 charts, live analysis progress, saved daily reports, proposed trade plans, and a
-separate paper portfolio. It uses this checkout's engine and configured models,
+local simulator plus optional automated Alpaca paper orders. It uses this checkout's engine and configured models,
 including the `chatgpt` subscription provider:
 
 ```bash
@@ -269,12 +269,13 @@ tradingagents-dashboard
 Open `http://127.0.0.1:8000`. Use `--port 8001` if that port is occupied.
 The server binds only to loopback. Adding a ticker does not call a model;
 **Analyze** starts one full analysis, with one analysis allowed at a time.
-The decision agents receive the current paper holdings and cash at the start
-of that run. Historical CLI reports also appear in the dashboard.
+Manual analyses receive the local simulator's holdings and cash; automated
+cycles receive the Alpaca paper account's book. Historical CLI reports also
+appear in the dashboard.
 
 The paper portfolio starts with **$100,000 virtual USD**, supports whole-share
 long positions, and records buys/sells only when you click a paper-trade button.
-It has no brokerage connection. Fills use the latest available Yahoo daily-bar
+These manual buttons never send broker orders. Fills use the latest available Yahoo daily-bar
 price, which can be a partial bar during market hours; fees and slippage are
 not modeled. Price dates are shown beside charts, positions and fills. Cash,
 cost basis and realized P&L use integer cents with transactional writes and
@@ -283,12 +284,67 @@ duplicate-submission protection. State lives in
 Daily research history follows the engine's existing one-state-per-ticker/date
 logs, while complete timestamped reports are also saved on disk.
 
-A practical workflow is to keep a small watchlist, analyze after meaningful
-news or once per session, read the bull/bear and risk reports, and manually
-select ideas to track on paper. Measure outcomes against a simple benchmark
+For online forward testing, enter **paper** account keys directly in the
+dashboard's password fields, then choose managed watchlist symbols and **Enable
+daily runs**. Credentials stay in a private `alpaca-paper.json` beside the local
+database. The REST host is fixed to `https://paper-api.alpaca.markets`; there is
+no live-trading mode. Use a dedicated long-only USD paper account. API connection
+alone does not enable orders. No new dependencies are needed for Alpaca.
+
+On macOS/Linux, the worker starts research at **10:00 America/New_York** on open
+market days, processes symbols serially, and catches up if started later in the
+session. **Run one cycle now** can start at the regular-session open. It checks
+Alpaca's exchange clock, including holidays and early closes, and sends no new
+orders within 30 minutes of closing. Positions carry overnight and are reviewed
+daily; there is no forced holding period or automatic stop-loss. This is
+multi-minute daily research, **not HFT**. Keep the server running and Mac awake.
+
+The fixed execution policy interprets final ratings: **Buy** targets 10% of
+equity, **Overweight** 5%, **Hold** keeps holdings, **Underweight** sells half
+(rounded up), **Sell** exits, and unreadable decisions do nothing. Buy targets
+only add shares; they do not trim positions that have appreciated. Buys use
+cash, a 10% cash reserve and a 40% total invested ceiling at sizing time. Whole
+shares only, no shorts/margin. Fresh IEX bid/ask quotes must be within five
+minutes and have at most a 1% spread. DAY limit orders allow 0.5% around the
+quoted ask/bid, with no extended-hours execution.
+
+Each account/symbol/day gets one durable attempt and a deterministic client
+order ID. A local process lock serializes workers sharing a database. Failed
+research, paused or late cycles do not submit orders. Open orders block further
+submissions. Uncertain network submissions are looked up by client ID and never
+blindly resubmitted; an unresolved missing order blocks future cycles until
+manually investigated. A failed/skipped symbol resumes on the next market day.
+Do not run separate databases against the same account. Pause prevents further
+submissions but leaves existing DAY orders at Alpaca; cancel those in Alpaca.
+
+The dashboard shows actual paper account equity, positions, order statuses,
+partial/full fills and a research/execution journal separately from the local
+manual ledger. Alpaca's simulated fills omit some live trading costs and
+liquidity effects. Measure forward outcomes against a simple benchmark
 and the same models without debate before assuming the extra model calls help.
 The engine's decision-memory/backtest scores are separate from the paper
 portfolio's cash and fill ledger.
+
+The execution selector also offers an **automatic local snapshot simulator**
+without broker keys. It has its own $100,000 ledger in `forward.sqlite3`,
+separate from both Alpaca and the card buttons' manual ledger. It uses the same
+rating/sizing policy with 0.05% adverse slippage per side, rounded to cents.
+Daily local cycles start at **16:30 America/New_York** and require a Yahoo bar
+for that date, so weekends and holidays do not produce stale-price fills.
+Run-now tests may use partial daily bars. These instant simulated fills do not
+model liquidity, latency or fees and do not substitute for broker execution.
+Switching modes pauses daily automation; run-once preserves an existing daily
+schedule. A cycle already attempted that day is not repeated.
+
+Each automated attempt saves an immutable research snapshot in the order
+journal, even if another manual analysis later overwrites the normal daily
+report. Performance samples before/after cycles persist in `paper_equity` in
+the main database. The dashboard plots cumulative account and SPY price
+returns, sampled P&L and sampled drawdown. SPY uses cached Yahoo snapshots,
+excludes dividends and may differ in timing from broker marks. These sparse
+samples cannot measure the full intraday drawdown. Run the forward test over
+multiple weeks and compare drawdown, return and execution failures before
+drawing conclusions; the initial run only verifies the plumbing.
 
 Current social inputs are Yahoo headlines, StockTwits and Reddit RSS. There is
 no X/Twitter feed or streaming quote connection. FRED needs its own key, and
