@@ -173,3 +173,59 @@ journal unchanged while future outcomes accumulate. No sector, rule or agent
 team is promoted automatically. The current price sample also cannot establish
 robustness across earlier crises, delistings, small-cap individual companies or
 HFT execution.
+
+## Separate weather-market pilot — 2026-10-17
+
+The user's temperature-market idea received a separate read-only feasibility
+test; it does not change the stock studies, rule journal or Alpaca account.
+The fixed protocol, sources and reproduction commands are in
+[WEATHER_EXPERIMENT.md](WEATHER_EXPERIMENT.md).
+
+All **14 requested NYC/KLGA daily events**, October 1–14, have complete resolved
+metadata, archived individual day-ahead GFS forecasts and fresh pre-decision
+price-history marks for every bracket. There were **zero missing/failed dates**.
+All 182 cached responses verified and reproduced identical cells and aggregate
+results with network access explicitly blocked. Files remain private, mode 0600.
+
+The independent toy model places a fixed, uncalibrated 3°F uncertainty around
+the forecast hourly maximum and selects three adjacent temperature bins. This
+is not PolyTemp's private model, published calls, wallet or reported profits.
+With the fixed 2¢/share adverse price assumption and assumed weather taker-fee
+formula, **all 14 modeled basket edges were negative**. The 5¢ value filter
+therefore entered **zero baskets** and abstained on all 14 dates. There is no
+active-date comparison or trading evidence from that filtered rule.
+
+Forcing an equal-share basket purchase on every date gives this diagnostic:
+
+| Fixed daily choice | Mean hypothetical return per dollar staked |
+| --- | ---: |
+| GFS model's highest-probability adjacent three bins | −8.65% |
+| Market-price-favourite adjacent three bins | −1.28% |
+| Uniform random adjacent three-bin window, exact mean | −55.94% |
+
+All three use identical dates, normalized budgets, costs and recorded settlement
+outcomes. These are averages of standalone hypothetical basket returns, **not
+compounded account returns or executable fills**. The model ladder contained
+the eventual winning bin on **12/14 dates (85.7%)**, yet lost money when forced
+to enter. It beat the weak random control but lagged the simple market-favourite
+choice. Its multiclass Brier score was also worse than normalized market prices:
+0.761 versus 0.521 (lower is better). This sample illustrates why beating random
+chance or advertising high multi-bin accuracy is insufficient to establish an
+economic edge.
+
+The latest recorded resolution among included brackets was 40.94 hours after
+entry. That observed duration does not guarantee future resolution timing or
+implement a weekly exit. Exact forecast publication latency, historical rule/fee
+versions, station/grid discrepancies, the arbitrary uncertainty width, selected
+station and 14 correlated dates limit inference. Independently sampled marks
+plus a price penalty do not establish historical asks, depth, queue position,
+capacity or fills; actual execution could be worse. No retuning, significance
+claim, annualization, strategy promotion or automated weather trading followed.
+
+The inspected `poly_data` main revision is a useful GPL-3.0 metadata/on-chain-fill
+retriever, not a weather model or a bundled executable-book archive. Its current
+chain pipeline requires a HyperSync token. The two bulk archive links in its
+`v1-final` README returned HTTP 404 on the check date. No upstream code, raw
+research or downloaded inputs were added to this repository. The pilot used
+keyless public market/forecast APIs instead; no credentials or subscription
+were added. Twenty-four targeted tests and Ruff passed.

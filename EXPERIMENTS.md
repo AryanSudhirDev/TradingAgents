@@ -187,3 +187,7 @@ daily review does not guarantee a five-session exit. A future short-horizon
 portfolio test must explicitly enforce its entry/exit policy. The current
 paper account's execution rules remain unchanged. No new model grid, random
 portfolio sweep or broker execution change was started by recording this goal.
+
+The subsequently requested, separate read-only weather-market feasibility pilot
+is specified in [WEATHER_EXPERIMENT.md](WEATHER_EXPERIMENT.md). It does not alter
+the fixed stock protocols or the existing Alpaca account.
