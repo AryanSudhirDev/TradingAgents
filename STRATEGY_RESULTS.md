@@ -240,6 +240,8 @@ operating choice to continue full-agent paper recommendations. The existing
 paper account, four symbols and execution limits are retained, with scheduled
 fifth-session exits and a separate performance epoch. Carried legacy positions
 remain in whole-account performance until exited. No paper cycle was forced.
+Daily scheduling was enabled during setup; later dashboard control changes paused
+execution. Preserve that pause until the user clarifies their choice.
 
 The fixed past-only portfolio replay saved **548/548 forecasts** across **137
 sessions**, April 1–October 15, 2026. It carries cash, whole shares and holding

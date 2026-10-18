@@ -59,7 +59,8 @@ cycle uses the Alpaca book. Manual buttons never submit broker orders.
 
 Migration pauses old automation once and establishes a new performance epoch;
 old reports, equity samples and fill journals stay saved. The existing paper
-account was then explicitly enabled for this authorized migration. Existing owned
+account was explicitly enabled during setup; later dashboard control changes
+paused it. The current dashboard state is authoritative; honor a user pause. Existing owned
 positions retain their original fill ages and remain in the new whole-account
 return until exited. That return is not a clean, flat-start Timestral portfolio.
 
@@ -141,8 +142,8 @@ LaunchAgents are enabled. Dashboard recovery was checked with a controlled proce
 restart and an unchanged order journal. Startup is per-user **at login**, with
 KeepAlive for the dashboard; physical reboot/login was not exercised. The Mac must
 stay online and awake; the installed AC-power sleep prevention does not guarantee
-battery/wake/network availability. Daily paper cycles are enabled; no paper cycle
-was forced during setup. The weekday review remains at 14:55 Mac local time.
+battery/wake/network availability. The normal daily schedule is configured; later dashboard control changes left
+paper execution paused pending clarification. No paper cycle was forced during setup. The weekday review remains at 14:55 Mac local time.
 Completed historical study workers stay removed. The separate fixed-rule shadow
 journal is unchanged and must not be confused with Timestral forecasts.
 
