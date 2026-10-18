@@ -4,6 +4,7 @@ import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 import requests
 
@@ -103,6 +104,7 @@ def auto(tmp_path, account, quote, monkeypatch):
     desk = Desk(config, tmp_path / "paper.sqlite3")
     monkeypatch.setattr(desk, "market", lambda ticker: {"price": 100, "as_of": "2026-10-16"})
     controller = desk.automation
+    monkeypatch.setattr(desk, "calendar", lambda day: [{"date": str(d.date())} for d in pd.bdate_range("2026-09-01", "2026-12-01")])
 
     class Broker:
         sent = []
@@ -376,3 +378,39 @@ def test_restart_marks_interrupted_claims_and_never_repeats_todays_attempt(auto)
     assert not auto.broker.sent
     assert len(auto.status()["runs"]) == 2
     assert all(r["status"] == "error" and "Interrupted" in r["note"] for r in auto.status()["runs"])
+
+
+def test_timestral_policy_rechecks_the_fresh_quote_before_entering(auto, monkeypatch, quote):
+    forecast = {"rows": [{"median": 103, "q10": 99, "q90": 107}] * 5}
+    def analyze(*args, **kwargs):
+        auto.desk.active["status"] = "done"
+        return {"final_trade_decision": "Rating: Overweight", "final_rating": "Overweight", "forecast": forecast}
+    monkeypatch.setattr(auto.desk, "analyze", analyze)
+    monkeypatch.setattr(auto.broker, "quote", lambda _: {**quote, "bp": 103.99, "ap": 104})
+    cycle(auto)
+    assert not auto.broker.sent
+    with auto.store.connect() as db:
+        row = db.execute("SELECT rating,report,status FROM paper_runs").fetchone()
+    saved = __import__("json").loads(row["report"])
+    assert row["rating"] == "Hold" and row["status"] == "skipped"
+    assert saved["forecast"] == forecast and saved["execution_policy"]["reference_price"] == pytest.approx(104 * 1.005)
+
+
+def test_fifth_session_exit_does_not_call_a_forecaster(auto, monkeypatch):
+    import json
+    original = auto.broker.order
+    old = {"symbol": "NVDA", "side": "buy", "qty": "9", "filled_qty": "9", "status": "filled", "filled_at": "2026-10-12T14:00:00Z"}
+    monkeypatch.setattr(auto.broker, "order", lambda client_id: old if client_id == "old-owned" else original(client_id))
+    monkeypatch.setattr(auto.broker, "positions", lambda: [{"symbol": "NVDA", "qty": "9", "avg_entry_price": "100", "market_value": "900"}])
+    with auto.store.connect() as db:
+        db.execute("INSERT INTO paper_runs (account,day,ticker,client_id,status,note,updated,intent) VALUES ('paper-account','2026-10-12','NVDA','old-owned','submitted','','2026-10-12',?)", (json.dumps({"side": "buy", "qty": "9"}),))
+    def exit_analysis(ticker, **kwargs):
+        assert "2026-10-16" in kwargs["exit_reason"]
+        auto.desk.active["status"] = "done"
+        return {"final_trade_decision": "Rating: Sell", "final_rating": "Sell"}
+    monkeypatch.setattr(auto.desk, "analyze", exit_analysis)
+    cycle(auto)
+    assert len(auto.broker.sent) == 1 and auto.broker.sent[0]["side"] == "sell" and auto.broker.sent[0]["qty"] == "9"
+    monkeypatch.setattr(auto.broker, "positions", lambda: [])
+    cycle(auto)
+    assert len(auto.broker.sent) == 1 and "failed" not in auto.message.lower()

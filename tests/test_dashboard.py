@@ -4,7 +4,6 @@ import copy
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from types import SimpleNamespace
 from uuid import uuid4
 
 import pandas as pd
@@ -179,7 +178,8 @@ def test_latest_report_loads_and_unsafe_markdown_is_escaped(client, app):
     (folder / "full_states_log_2026-10-14.json").write_text("[]")
     (folder / "full_states_log_2026-10-13.json").write_text(json.dumps({"company_of_interest": "NVDA", "final_trade_decision": "Incomplete."}))
     state = client.get("/api/state").json()
-    assert state["latest"]["NVDA"]["rating"] == "Overweight"
+    assert "NVDA" not in state["latest"]  # Legacy reports remain readable, not current Timestral decisions.
+    assert client.get("/api/history/NVDA").json()[0]["engine"] == "archived agents"
     page = client.get("/api/report/NVDA/2026-10-15")
     assert page.status_code == 200 and "<script>alert" not in page.text
     assert client.get("/api/report/NVDA/2026-10-14").status_code == 404
@@ -195,54 +195,22 @@ def test_market_reads_as_of_rows_and_keeps_last_quote_date(app, monkeypatch):
     assert app.state.desk.market("NVDA") == result and len(calls) == 1
 
 
-def test_analysis_uses_current_stream_lifecycle_and_paper_holdings(app, monkeypatch):
+def test_analysis_uses_timestral_and_existing_paper_holdings(app, monkeypatch):
     desk = app.state.desk
     fill(desk.store)
-    seen = {}
-
-    class Graph:
-        def __init__(self, **kwargs):
-            self.propagator = SimpleNamespace(get_graph_args=lambda **k: {"config": {}})
-
-        def create_run_state(self, ticker, day, portfolio):
-            seen["portfolio"] = portfolio
-            return {"company_of_interest": ticker, "trade_date": day}
-
-        def begin_checkpoint(self, *a, **k):
-            return "thread"
-
-        def checkpoint_input(self, state):
-            return state
-
-        def stream_run(self, state, **kwargs):
-            assert kwargs["config"]["configurable"]["thread_id"] == "thread"
-            yield [], {**state, "market_report": "Verified prices.", "investment_debate_state": {"bull_history": "Bull argument."}}
-            yield [], {"final_trade_decision": "**Rating**: Overweight", "final_rating": "Overweight"}
-
-        def record_decision(self, ticker, day, state):
-            seen["state"] = state
-
-        def save_reports(self, *a):
-            seen["saved"] = True
-
-        def clear_checkpoint_on_success(self, *a, **k):
-            seen["cleared"] = True
-
-        def run_settings(self):
-            return {"llm_provider": "chatgpt", "quick_think_llm": "test-model"}
-
-        def end_checkpoint(self):
-            seen["closed"] = True
-
-    monkeypatch.setattr(server, "TradingAgentsGraph", Graph)
-    desk.active = {"ticker": "NVDA", "status": "running"}
-    desk.analyze("NVDA")
-    assert desk.active["status"] == "done" and "Bull" in desk.active["completed"]
-    assert seen["portfolio"].positions[0].quantity == 10
-    assert seen["portfolio"].cash == (INITIAL_CASH - 100010) / 100
-    assert seen["state"]["market_report"] == "Verified prices."
-    assert seen["state"]["run_settings"]["llm_provider"] == "chatgpt"
-    assert seen["saved"] and seen["cleared"] and seen["closed"]
+    forecast = {"last_close": 100, "last_session": "2026-10-15", "context_sessions": 512,
+                "inference_ms": 20, "cache_hit": False,
+                "rows": [{"date": "2026-10-16", "q10": 99, "median": 104, "q90": 108}]}
+    monkeypatch.setattr(desk, "calendar", lambda day: [])
+    monkeypatch.setattr(desk.engine, "forecast", lambda *a: forecast)
+    desk.claim("NVDA")
+    final = desk.analyze("NVDA", day="2026-10-16")
+    assert desk.active["status"] == "done"
+    assert desk.active["completed"] == ["Data", "Timestral", "Policy"]
+    assert desk.active["stats"]["llm_calls"] == 0
+    assert final["final_rating"] == "Hold"  # Existing shares are not topped up.
+    assert final["run_settings"]["engine"] == "timestral"
+    assert (server.Path(desk.config["results_dir"]) / "NVDA/Timestral_logs/report_2026-10-16.html").exists()
 
 
 def test_an_active_analysis_blocks_a_second_request(app):
@@ -251,30 +219,28 @@ def test_an_active_analysis_blocks_a_second_request(app):
         app.state.desk.start("NVDA")
 
 
-def test_live_stats_are_visible_before_the_first_analyst_finishes(app):
+def test_forecast_starts_with_zero_llm_calls(app):
     desk = app.state.desk
     desk.claim("NVDA")
-    desk.stats = server.StatsCallbackHandler()
-    desk.stats.on_chat_model_start({}, [])
-    assert desk.state()["active"]["stats"]["llm_calls"] == 1
+    assert desk.state()["active"]["stats"]["llm_calls"] == 0
     assert desk.state()["active"]["completed"] == []
 
 
-def test_failed_analysis_preserves_checkpoint_and_closes_it(app, monkeypatch):
-    closed = []
-
-    class BrokenGraph:
-        def __init__(self, **kwargs):
-            pass
-
-        def create_run_state(self, *a, **k):
-            raise RuntimeError("provider-sensitive-detail")
-
-        def end_checkpoint(self):
-            closed.append(True)
-
-    monkeypatch.setattr(server, "TradingAgentsGraph", BrokenGraph)
-    app.state.desk.active = {"ticker": "NVDA", "status": "running"}
+def test_failed_forecast_exposes_only_safe_error(app, monkeypatch):
+    def fail(*a):
+        raise RuntimeError("provider-sensitive-detail")
+    monkeypatch.setattr(app.state.desk, "calendar", lambda day: [])
+    monkeypatch.setattr(app.state.desk.engine, "forecast", fail)
+    app.state.desk.claim("NVDA")
     app.state.desk.analyze("NVDA")
-    assert closed and app.state.desk.active["status"] == "error"
+    assert app.state.desk.active["status"] == "error"
     assert "provider-sensitive-detail" not in app.state.desk.active["error"]
+
+
+def test_deadline_exit_does_not_require_working_model(app, monkeypatch):
+    def fail(*a):
+        raise AssertionError("The model must not be called for a deadline exit")
+    monkeypatch.setattr(app.state.desk.engine, "forecast", fail)
+    app.state.desk.claim("NVDA")
+    final = app.state.desk.analyze("NVDA", exit_reason="Fifth exchange session")
+    assert final["final_rating"] == "Sell" and final["forecast"] is None

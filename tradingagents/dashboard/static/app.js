@@ -3,7 +3,7 @@ const $ = selector => document.querySelector(selector);
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dollars = cents => new Intl.NumberFormat('en-US', {style:'currency',currency:'USD'}).format(cents / 100);
 const signClass = number => number < 0 ? 'neg' : number > 0 ? 'pos' : '';
-const steps = ['Market','Sentiment','News','Fundamentals','Bull','Bear','Research manager','Trader','Aggressive','Conservative','Neutral','Portfolio manager'];
+const steps = ['Data','Timestral','Policy'];
 const quotes = new Map();
 const versions = new Map();
 const pendingTrades = new Map();
@@ -53,7 +53,7 @@ function createCard(ticker) {
   card.innerHTML = `<div class="card-header"><h2 class="card-ticker-name">${esc(ticker)}</h2><div class="card-actions"><button class="btn" data-action="analyze" data-ticker="${esc(ticker)}">Analyze</button><button class="btn-remove" data-action="remove" data-ticker="${esc(ticker)}" aria-label="Remove ${esc(ticker)} from watchlist">×</button></div></div>
     <div class="card-agent-bar" data-progress>Ready for research</div><div class="agent-pills" data-pills></div>
     <div class="chart-container" data-chart><span class="muted">Loading Yahoo price data…</span></div>
-    <div class="card-decision" data-decision></div><div class="card-plan" data-plan></div><div class="card-plan" data-live></div>
+    <div class="card-decision" data-decision></div><div class="card-plan" data-forecast></div><div class="card-plan" data-plan></div><div class="card-plan" data-live></div>
     <p class="card-note">Manual local simulator · separate from Alpaca</p><div class="trade-bar"><div class="trade-controls"><label for="shares-${esc(ticker)}" class="muted">Shares</label><input type="number" class="trade-input" id="shares-${esc(ticker)}" min="1" max="1000000" step="1" placeholder="1" value="1"><button class="btn-buy" data-action="BUY" data-ticker="${esc(ticker)}">Local buy</button><button class="btn-sell" data-action="SELL" data-ticker="${esc(ticker)}">Local sell</button></div><div class="trade-position" data-position></div></div>
     <div class="report-actions"><label for="history-${esc(ticker)}" class="muted">Reports</label><select id="history-${esc(ticker)}" data-history aria-label="Saved ${esc(ticker)} reports"><option value="">No saved reports</option></select><button class="btn" data-action="report" data-ticker="${esc(ticker)}">Open report</button></div>`;
   $('#grid').appendChild(card);
@@ -67,8 +67,8 @@ async function loadHistory(ticker) {
     const select = $('#card-' + ticker)?.querySelector('[data-history]');
     if (!select) return;
     const old = select.value;
-    select.innerHTML = items.length ? items.map(i=>`<option value="${esc(i.date)}">${esc(i.date)} · ${esc(i.rating)}</option>`).join('') : '<option value="">No saved reports</option>';
-    if (items.some(i=>i.date===old)) select.value = old;
+    select.innerHTML = items.length ? items.map(i=>`<option value="${esc(i.date+'|'+i.engine)}">${esc(i.date)} · ${esc(i.rating)} · ${esc(i.engine)}</option>`).join('') : '<option value="">No saved reports</option>';
+    if (items.some(i=>i.date+'|'+i.engine===old)) select.value = old;
   } catch (error) { toast(error.message,true); }
 }
 
@@ -94,7 +94,7 @@ async function refresh() {
   try {
     desk = await api('state');
     $('#connection').textContent = 'Local engine connected';
-    $('#model-info').textContent = `Provider: ${desk.provider} · Analysts: ${desk.quick_model} · Managers: ${desk.deep_model}. Model calls use the configured provider’s usage allowance.`;
+    $('#model-info').textContent = `${desk.engine.model} · local CPU · five-session forecasts · no ChatGPT calls. Quantile bands are estimates, not calibrated confidence or guaranteed loss limits.`;
     $('#fred-status').textContent = desk.fred_configured ? 'FRED key configured; availability is reported in each analysis.' : 'FRED is not configured. A separate free FRED key enables economic indicators.';
     renderPortfolio(desk.portfolio);
     const tickers = desk.portfolio.watchlist;
@@ -109,7 +109,7 @@ async function refresh() {
       card.classList.toggle('analyzing',running);
       card.querySelector('[data-action="analyze"]').disabled = desk.active?.status === 'running';
       card.querySelector('[data-action="remove"]').disabled = running;
-      card.querySelector('[data-progress]').textContent = active?.status==='error' ? active.error : running ? `Research running · ${active.completed.length}/12 stages reported · ${active.stats.llm_calls || 0} model calls` : latest ? `Research complete · ${latest.date}` : 'Ready · click Analyze to start';
+      card.querySelector('[data-progress]').textContent = active?.status==='error' ? active.error : running ? `Forecast running · ${active.completed.length}/${steps.length} stages complete` : latest ? `Research complete · ${latest.date}` : 'Ready · click Analyze to start';
       card.querySelector('[data-progress]').classList.toggle('error',active?.status==='error');
       const completed = active?.completed || latest?.completed || [];
       card.querySelector('[data-pills]').innerHTML = steps.map(name=>`<span class="agent-pill${completed.includes(name)?' done':''}">${esc(name)}</span>`).join('');
@@ -118,13 +118,15 @@ async function refresh() {
       if (live.dataset.version!==reportVersion) {
         const open=live.querySelector('details')?.open || false;
         live.dataset.version=reportVersion;
-        live.innerHTML=active?.status==='running' && Object.keys(active.reports || {}).length ? `<details${open?' open':''}><summary>Live analyst reports</summary>${Object.entries(active.reports).map(([name,text])=>`<h3>${esc(name)}</h3><pre>${esc(text)}</pre>`).join('')}</details>` : '';
+        live.innerHTML=active?.status==='running' && Object.keys(active.reports || {}).length ? `<details${open?' open':''}><summary>Forecast details</summary>${Object.entries(active.reports).map(([name,text])=>`<h3>${esc(name)}</h3><pre>${esc(text)}</pre>`).join('')}</details>` : '';
       }
       const version = JSON.stringify(latest);
       if (!versions.has(ticker) || versions.get(ticker) !== version) {
         versions.set(ticker,version);
         card.querySelector('[data-decision]').innerHTML = latest ? `<span class="paper-badge">${esc(latest.rating)}</span><p class="decision-reasoning">${esc(latest.decision)}</p>` : '<p class="muted">No completed research decision yet.</p>';
-        card.querySelector('[data-plan]').innerHTML = latest?.plan ? `<details><summary>Trader’s proposed plan</summary><pre>${esc(latest.plan)}</pre></details>` : '';
+        card.querySelector('[data-plan]').innerHTML = latest?.plan ? `<details><summary>Decision policy</summary><pre>${esc(latest.plan)}</pre></details>` : '';
+        const f=latest?.forecast;
+        card.querySelector('[data-forecast]').innerHTML=f?`<p class="muted">${f.context_sessions} completed sessions through ${esc(f.last_session)} · inference ${Number(f.inference_ms).toFixed(1)} ms${f.cache_hit?' · frozen forecast reused':''}</p>${table(['Session','q10 estimate','Median','q90 estimate'],f.rows.map(r=>[esc(r.date),dollars(r.q10*100),dollars(r.median*100),dollars(r.q90*100)]))}<p class="muted">Nominal 10th–90th quantiles; historical coverage has not been established.</p>`:'';
         loadHistory(ticker);
       }
       const pos = desk.portfolio.positions.find(p=>p.ticker===ticker);
@@ -158,9 +160,9 @@ $('#grid').addEventListener('click',async event=>{
     if (action==='remove') { await api('watch',{ticker,remove:true}); versions.delete(ticker); }
     if (action==='analyze') { button.disabled=true; await api('analyze',{ticker}); toast(`${ticker} analysis started.`); }
     if (action==='report') {
-      const day=$('#card-'+ticker).querySelector('[data-history]').value;
+      const [day,engine]=$('#card-'+ticker).querySelector('[data-history]').value.split('|');
       if (!day) throw new Error('Run an analysis to create a report.');
-      window.open(`/api/report/${encodeURIComponent(ticker)}/${encodeURIComponent(day)}`,'_blank','noopener');
+      window.open(`/api/report/${encodeURIComponent(ticker)}/${encodeURIComponent(day)}?engine=${encodeURIComponent(engine)}`,'_blank','noopener');
     }
     if (action==='BUY' || action==='SELL') {
       if (busyTrades.has(ticker)) return;
@@ -217,7 +219,7 @@ async function refreshPaper() {
     const metrics=a?[[`${label} equity`,a.equity],['Cash',a.cash],...(a.last_equity==null?[]:[['Change since prior close',Number(a.equity)-Number(a.last_equity)]])]:[];
     $('#broker-metrics').innerHTML=metrics.map(([name,value])=>`<div class="metric"><span>${name}</span><strong>${dollars(Math.round(Number(value)*100))}</strong></div>`).join('')+(a?`<p class="muted">Account snapshot: ${esc(new Date(p.as_of).toLocaleString())}${local?'':` · ${p.market_open?'Market open':'Market closed'}`}</p>`:'');
     renderPerformance(p.performance);
-    $('#broker-positions').innerHTML=table([`${label} symbol`,'Shares','Average cost','Current mark','Unrealized P&L'],(p.positions || []).map(pos=>[esc(pos.symbol),esc(pos.qty),dollars(Number(pos.avg_entry_price)*100),dollars(Number(pos.current_price)*100),dollars(Number(pos.unrealized_pl)*100)]));
+    $('#broker-positions').innerHTML=table([`${label} symbol`,'Shares','Average cost','Current mark','Unrealized P&L','First fill / exit due'],(p.positions || []).map(pos=>[esc(pos.symbol),esc(pos.qty),dollars(Number(pos.avg_entry_price)*100),dollars(Number(pos.current_price)*100),dollars(Number(pos.unrealized_pl)*100),esc(p.holdings?.[pos.symbol]?.first_day || 'Unverified')+' / '+esc(p.holdings?.[pos.symbol]?.deadline || 'Pending')]));
     $('#paper-orders-title').textContent=local?'Local automatic fills · latest 100':'Alpaca orders · latest 100, including fills and rejections';
     $('#broker-orders').innerHTML=table(['Submitted','Symbol','Side','Shares','Status','Filled shares','Average fill','Limit','Client order ID'],(p.orders || []).map(o=>[esc(o.submitted_at?new Date(o.submitted_at).toLocaleString():'—'),esc(o.symbol),esc(o.side),esc(o.qty),esc(o.status),esc(o.filled_qty),o.filled_avg_price?dollars(Number(o.filled_avg_price)*100):'—',o.limit_price?dollars(Number(o.limit_price)*100):'—',esc(o.client_order_id)]));
     const orderStates=new Map((p.orders || []).map(o=>[o.client_order_id,o.status]));
@@ -258,3 +260,20 @@ $('#paper-mode').addEventListener('change',async event=>{
 });
 refreshPaper();
 setInterval(refreshPaper,5000);
+
+async function refreshBacktest() {
+  try {
+    const data=await api('timestral/backtest');
+    $('#backtest-summary').innerHTML=data.ready?`<p>${esc(data.plan.start)} – ${esc(data.plan.end)} · completed ${esc(new Date(data.completed_at).toLocaleString())}</p>${table(['Fixed policy','Sessions','Net return','Sampled drawdown','Fills','Mean exposure'],data.arms.map(a=>[esc(a.arm),a.sessions,Number(a.return_pct).toFixed(3)+'%',Number(a.drawdown_pct).toFixed(3)+'%',a.fills,Number(a.average_exposure_pct).toFixed(2)+'%']))}<p class="muted">${esc(data.limits)}</p>`:'<p class="muted">The fixed replay has not completed yet.</p>';
+  } catch { $('#backtest-summary').textContent='Saved replay unavailable; check the private run log.'; }
+}
+refreshBacktest();
+
+async function refreshMarkets() {
+  try {
+    const data=await api('timestral/markets');
+    const n=value=>value==null?'—':Number(value).toFixed(2)+'%';
+    $('#markets-summary').innerHTML=data.ready?`<p>${data.aggregates.length}/${data.requested_series} series saved · ${data.failed_series} failed</p>${table(['Series','Market','Resolved windows','Model MAPE','Last-close MAPE','Drift MAPE','Skill vs last close','q10–q90 coverage'],data.aggregates.map(a=>[esc(a.ticker),esc(a.market),a.resolved,n(a.model_mape_pct),n(a.flat_mape_pct),n(a.drift_mape_pct),n(a.skill_vs_flat_pct),n(a.interval_coverage_pct)]))}<p class="muted">${esc(data.limits)}</p>`:'<p class="muted">The fixed comparison has not completed yet.</p>';
+  } catch { $('#markets-summary').textContent='Saved cross-market comparison unavailable.'; }
+}
+refreshMarkets();

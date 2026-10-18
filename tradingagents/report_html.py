@@ -224,6 +224,10 @@ def _group(name: str, values_html: str) -> str:
 def _run_details(final_state: dict, settings: dict | None) -> list[tuple[str, str]]:
     """The run details as (label, value HTML); every value from the run is escaped."""
     details = [("Generated", escape(datetime.now().strftime("%Y-%m-%d %H:%M")))]
+    if settings and settings.get("engine") == "timestral":
+        return details + [("Engine", _fields([settings["model"], "CPU", settings["version"]])),
+                          ("Model revision", _fields([settings["revision"]])),
+                          ("Horizon", "5 exchange sessions · uncalibrated quantile estimates · paper only")]
     if settings:
         s = settings.get
         for tier in ("deep", "quick"):

@@ -46,6 +46,10 @@ dashboard = [
     "fastapi>=0.115.0",
     "uvicorn>=0.30.0",
 ]
+timestral = [
+    "exchange-calendars>=4.13.2",
+    "timestral @ git+https://github.com/mistralai/timestral.git@a534bdbd244d64f3d9d743f46c7bf6fc330ed4ff",
+]
 
 [project.scripts]
 tradingagents = "cli.main:app"
