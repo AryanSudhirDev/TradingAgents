@@ -229,3 +229,42 @@ chain pipeline requires a HyperSync token. The two bulk archive links in its
 research or downloaded inputs were added to this repository. The pilot used
 keyless public market/forecast APIs instead; no credentials or subscription
 were added. Twenty-four targeted tests and Ruff passed.
+
+## Timestral migration and separate diagnostics — 2026-10-18
+
+At the user's explicit request, the dashboard now uses a pinned local
+Timestral-28M engine plus fixed long-only portfolio rules. The original agent
+implementation is preserved in Git tag `archive/pre-timestral-20261018`; its
+completed studies remain historical evidence. This supersedes the earlier
+operating choice to continue full-agent paper recommendations. The existing
+paper account, four symbols and execution limits are retained, with scheduled
+fifth-session exits and a separate performance epoch. Carried legacy positions
+remain in whole-account performance until exited. No paper cycle was forced.
+
+The fixed past-only portfolio replay saved **548/548 forecasts** across **137
+sessions**, April 1–October 15, 2026. It carries cash, whole shares and holding
+ages, applies 0.5% adverse costs each side and reproduces all three arms from
+frozen data/forecasts with networking and model loading blocked. Timestral plus
+fixed rules returned **+0.314%**, versus −0.474% for always entering and −0.418%
+for one fixed random path. Only **six positions** were entered, with **0.39% mean
+exposure**, compared with 15.52% and 12.96% for those controls. These comparisons
+are not exposure matched and do not establish performance above chance.
+
+A separate observation-only panel completed **14/14 series, 402 resolved
+five-observation windows**, across equity funds, bonds, metals, oil/dollar funds
+and crypto. Seven series modestly beat a last-close forecast and seven lagged;
+the largest relative error improvement was 2.99% for QQQ, the largest deterioration
+3.59% for TLT. A single USO data timeout recovered on one bounded retry. No market,
+model or policy was selected or promoted from these results. Crypto uses calendar
+days; funds use NYSE sessions. This panel measures forecast error, not portfolios
+or executable trades; oil and currency funds are proxies for those markets.
+
+Unknown pretraining overlap, current adjusted data rather than a point-in-time
+archive, selected survivors, correlated shocks and small samples limit both
+exercises. Portfolio replay opening fills approximate the production 10:00 NY
+window, not historical executable quotes. Quantile bands remain uncalibrated;
+fifth-session exits are scheduled, not guaranteed fills. Future paper observations
+remain separate from retrospective diagnostics and the unchanged rule journal.
+See [TIMESTRAL.md](TIMESTRAL.md) for the fixed protocols, controls, CPU usage,
+private reproduction commands and operating details. No raw inputs, forecasts,
+credentials or account data are committed.

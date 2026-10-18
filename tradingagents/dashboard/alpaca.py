@@ -96,6 +96,9 @@ class AlpacaPaper:
     def clock(self):
         return self.request("GET", "/v2/clock")
 
+    def calendar(self, start, end):
+        return self.request("GET", "/v2/calendar", params={"start": start, "end": end})
+
     def quote(self, ticker):
         return self.request("GET", f"/v2/stocks/{stock_symbol(ticker).replace('-', '.')}/quotes/latest", params={"feed": "iex"}, data=True)["quote"]
 

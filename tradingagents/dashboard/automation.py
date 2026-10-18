@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from tradingagents.agents.rating import run_rating
 from tradingagents.portfolio import PortfolioContext
+from tradingagents.timestral_engine import VERSION, decide
 
 from .alpaca import AlpacaPaper, BrokerError, number, order_intent
 from .simulator import LocalPaper
@@ -45,6 +46,7 @@ class PaperAutomation:
         self.cached = None
         self.fetched = 0
         self.broker = None
+        self.holdings = {}
         self.simulator = LocalPaper(desk)
         try:
             self.broker = AlpacaPaper.load(self.credentials)
@@ -69,6 +71,14 @@ class PaperAutomation:
                 db.execute("ALTER TABLE paper_runs ADD COLUMN report TEXT")
             if "mode" not in {r[1] for r in db.execute("PRAGMA table_info(automation)")}:
                 db.execute("ALTER TABLE automation ADD COLUMN mode TEXT NOT NULL DEFAULT 'alpaca'")
+            columns = {r[1] for r in db.execute("PRAGMA table_info(automation)")}
+            if "engine_version" not in columns:
+                db.execute("ALTER TABLE automation ADD COLUMN engine_version TEXT NOT NULL DEFAULT 'legacy'")
+                db.execute("ALTER TABLE automation ADD COLUMN engine_started_at TEXT")
+            if db.execute("SELECT engine_version FROM automation WHERE id=1").fetchone()[0] != VERSION:
+                started = datetime.now(UTC).isoformat() if (db.execute("SELECT COUNT(*) FROM paper_runs").fetchone()[0] or db.execute("SELECT COUNT(*) FROM paper_equity").fetchone()[0]) else None
+                db.execute("UPDATE automation SET enabled=0,engine_version=?,engine_started_at=? WHERE id=1", (VERSION, started))
+                self.message = "Timestral installed. Previous automation paused for migration; review the engine and enable paper runs."
 
     def settings(self):
         with self.store.connect() as db:
@@ -189,8 +199,9 @@ class PaperAutomation:
             db.execute("INSERT INTO paper_equity VALUES (?,?,?,?)", (account["id"], datetime.now(UTC).isoformat(), int((number(account["equity"]) * 100).quantize(number(1))), benchmark))
 
     def performance(self, account):
+        started = self.settings()["engine_started_at"]
         with self.store.connect() as db:
-            samples = [dict(r) for r in db.execute("SELECT stamp,equity,benchmark FROM paper_equity WHERE account=? ORDER BY stamp", (account,))]
+            samples = [dict(r) for r in db.execute("SELECT stamp,equity,benchmark FROM paper_equity WHERE account=? AND (? IS NULL OR stamp>=?) ORDER BY stamp", (account, started, started))]
         if not samples:
             return {"samples": []}
         peak = samples[0]["equity"]
@@ -255,6 +266,12 @@ class PaperAutomation:
                 if execution.orders("open"):
                     self.message = "Waiting for open paper orders to finish. See Alpaca orders below."
                     return
+                from .holdings import deadline, sync_holdings
+                positions = execution.positions()
+                self.holdings = sync_holdings(self, execution, positions, account_id)
+                holding = self.holdings.get(ticker)
+                due = deadline(holding["first_day"], self.desk.calendar(day)) if holding else None
+                exit_reason = f"Exit by the fifth exchange session ({due}); holding age is based on confirmed fills." if due and day >= due else None
                 client_id = "ta-" + hashlib.sha256(f"{account_id}:{day}:{ticker}".encode()).hexdigest()[:40]
                 if execution is self.simulator:
                     client_id = str(uuid5(NAMESPACE_URL, client_id))
@@ -278,14 +295,14 @@ class PaperAutomation:
                     {"ticker": p["symbol"].replace(".", "-"), "quantity": p["qty"], "average_price": p["avg_entry_price"]} for p in positions
                 ]})
                 self.message = f"Researching {ticker} for the {day} paper cycle…"
-                final = self.desk.analyze(ticker, portfolio=portfolio, day=day)
+                final = self.desk.analyze(ticker, portfolio=portfolio, day=day, **({"exit_reason": exit_reason} if exit_reason else {}))
                 if not final or not final.get("final_trade_decision"):
                     self.update(account_id, day, ticker, "error", "Analysis failed or incomplete; no order was sent.")
                     continue
                 rating = run_rating(final)
                 report = {key: value for key, value in final.items() if key.endswith("_report") or key in (
                     "final_trade_decision", "final_rating", "investment_plan", "trader_investment_plan",
-                    "investment_debate_state", "risk_debate_state", "run_settings",
+                    "investment_debate_state", "risk_debate_state", "run_settings", "forecast",
                 )}
                 report.update(company_of_interest=ticker, trade_date=day)
                 with self.store.connect() as db:
@@ -302,10 +319,21 @@ class PaperAutomation:
                     if account["id"] != account_id or execution.orders("open"):
                         raise BrokerError("Account changed or an open order exists; no additional order was sent.")
                     if execution is self.simulator:
+                        if final.get("forecast"):
+                            policy = decide(final["forecast"], float(execution.market(ticker, day)["price"]) * (0.9995 if holding else 1.0005), bool(holding))
+                            rating = policy["rating"]
                         intent = execution.intent(ticker, rating, account, positions, day)
                     else:
-                        quote = execution.quote(ticker) if rating in ("Buy", "Overweight", "Underweight", "Sell") else None
+                        quote = execution.quote(ticker) if final.get("forecast") or rating in ("Buy", "Overweight", "Underweight", "Sell") else None
+                        if final.get("forecast"):
+                            policy = decide(final["forecast"], float(number(quote["bp"] if holding else quote["ap"])) * (0.995 if holding else 1.005), bool(holding))
+                            rating = policy["rating"]
                         intent = order_intent(ticker, rating, account, positions, quote)
+                    if final.get("forecast"):
+                        report.update(final_rating=rating, execution_policy=policy,
+                                      final_trade_decision=f"Rating: {rating}\n{policy['reason']}\nRe-evaluated against the execution reference including its adverse price allowance. Five-session deadline and fixed paper risk limits apply.")
+                        with self.store.connect() as db:
+                            db.execute("UPDATE paper_runs SET report=?,rating=? WHERE client_id=?", (json.dumps(report, default=str), rating, client_id))
                     if not intent:
                         self.update(account_id, day, ticker, "skipped", "No change under the rating and sizing rules", rating=rating)
                         continue
@@ -345,7 +373,9 @@ class PaperAutomation:
         account_id = "local-forward" if local else settings["account"]
         result = {"configured": bool(self.broker), "enabled": bool(settings["enabled"]), "symbols": settings["symbols"],
                   "mode": settings["mode"], "busy": self.run_lock.locked(), "message": self.message, "connected": False,
-                  "performance": self.performance(account_id), "health": self.health()}
+                  "performance": self.performance(account_id), "health": self.health(),
+                  "engine": self.desk.engine.metadata(), "holdings": self.holdings,
+                  "engine_started_at": settings["engine_started_at"]}
         with self.store.connect() as db:
             result["runs"] = [dict(r) for r in db.execute("SELECT day,ticker,client_id,status,rating,intent,note,updated,report IS NOT NULL AS has_report FROM paper_runs WHERE account=? ORDER BY updated DESC LIMIT 100", (account_id,))]
         if local:
@@ -361,6 +391,12 @@ class PaperAutomation:
                 account, positions, orders, clock = self.broker.account(), self.broker.positions(), self.broker.orders(), self.broker.clock()
                 if account["id"] != settings["account"]:
                     raise BrokerError("Paper account changed. Reconnect before proceeding.")
+                if not self.run_lock.locked():
+                    from .holdings import deadline, sync_holdings
+                    self.holdings = sync_holdings(self, self.broker, positions, account["id"])
+                    for holding in self.holdings.values():
+                        holding["deadline"] = deadline(holding["first_day"], self.desk.calendar(datetime.now(NEW_YORK).date().isoformat()))
+                    result["holdings"] = copy.deepcopy(self.holdings)
                 self.cached = {"connected": True, "account": {k: account.get(k) for k in ("equity", "cash", "last_equity")},
                                "positions": [{k: p.get(k) for k in ("symbol", "qty", "avg_entry_price", "current_price", "market_value", "unrealized_pl")} for p in positions],
                                "orders": [{k: o.get(k) for k in ("symbol", "side", "qty", "status", "filled_qty", "filled_avg_price", "limit_price", "client_order_id", "submitted_at")} for o in orders],

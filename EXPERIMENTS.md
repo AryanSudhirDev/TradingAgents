@@ -191,3 +191,15 @@ portfolio sweep or broker execution change was started by recording this goal.
 The subsequently requested, separate read-only weather-market feasibility pilot
 is specified in [WEATHER_EXPERIMENT.md](WEATHER_EXPERIMENT.md). It does not alter
 the fixed stock protocols or the existing Alpaca account.
+
+# Timestral work — separately authorized 2026-10-18
+
+The broad agent and sector studies above are complete and remain frozen. Do not
+relaunch them. The user's later request authorizes replacing the dashboard's
+decision path with Timestral, a past-only portfolio replay and a separate
+observation-only cross-market forecast comparison. These are distinct from the
+original studies, not extensions to their grid or evidence for promoting an old
+winner. The fixed protocols and operating limits are in [TIMESTRAL.md](TIMESTRAL.md),
+and aggregate results in [STRATEGY_RESULTS.md](STRATEGY_RESULTS.md). No additional
+paper symbols, leverage, live trading, subscriptions or social connectors follow
+from that diagnostic comparison.

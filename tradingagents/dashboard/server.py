@@ -1,47 +1,35 @@
-"""Local dashboard over the current graph, with optional Alpaca paper execution."""
+"""TradingAgents interface over a local Timestral engine and paper execution."""
 
 import argparse
 import copy
 import json
 import logging
-import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from cli.stats_handler import StatsCallbackHandler
 from tradingagents.agents.rating import run_rating
 from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.portfolio import PortfolioContext
 from tradingagents.report_html import render_report
 from tradingagents.reporting import _report_parts
+from tradingagents.timestral_engine import TimestralEngine, decide
 
-from .automation import PaperAutomation
+from .automation import NEW_YORK, PaperAutomation
 from .store import PaperStore, stock_symbol
 
 logger = logging.getLogger(__name__)
-REPORT_FIELDS = {
-    "market_report": "Market", "sentiment_report": "Sentiment", "news_report": "News",
-    "fundamentals_report": "Fundamentals", "investment_plan": "Research manager",
-    "trader_investment_plan": "Trader", "final_trade_decision": "Portfolio manager",
-}
 
+def report_parts(state):
+    if state.get("run_settings", {}).get("engine") == "timestral":
+        return [(title, key, [(title, key + ".md", state[key])]) for title, key in
+                (("Forecast", "market_report"), ("Decision policy", "trader_investment_plan"), ("Risk and execution", "final_trade_decision")) if state.get(key)]
+    return _report_parts(state)
 
-def completed_stages(state):
-    completed = [name for field, name in REPORT_FIELDS.items() if state.get(field)]
-    for group, fields in (
-        ("investment_debate_state", (("bull_history", "Bull"), ("bear_history", "Bear"))),
-        ("risk_debate_state", (("aggressive_history", "Aggressive"), ("conservative_history", "Conservative"), ("neutral_history", "Neutral"))),
-    ):
-        for field, name in fields:
-            if (state.get(group) or {}).get(field):
-                completed.append(name)
-    return completed
 
 
 class Desk:
@@ -50,15 +38,17 @@ class Desk:
         self.store = PaperStore(path)
         self.lock = threading.Lock()
         self.active = None
-        self.stats = None
         self.markets = {}
+        self.engine = TimestralEngine(self.config)
+        self._calendar = None
         self.automation = PaperAutomation(self)
 
     def history(self, ticker):
         ticker = stock_symbol(ticker)
-        folder = Path(self.config["results_dir"]) / ticker / "TradingAgentsStrategy_logs"
         result = []
-        for path in sorted(folder.glob("full_states_log_*.json"), reverse=True):
+        root = Path(self.config["results_dir"]) / ticker
+        paths = [*root.glob("Timestral_logs/full_states_log_*.json"), *root.glob("TradingAgentsStrategy_logs/full_states_log_*.json")]
+        for path in sorted(paths, key=lambda p: (p.name, "Timestral_logs" in str(p)), reverse=True):
             try:
                 state = json.loads(path.read_text())
                 if (isinstance(state, dict) and state.get("company_of_interest") == ticker
@@ -90,19 +80,37 @@ class Desk:
         portfolio = self.store.snapshot()
         with self.lock:
             active = copy.deepcopy(self.active)
-            if active and active["status"] == "running" and self.stats:
-                active["stats"] = self.stats.get_stats()
         latest = {}
         for ticker in portfolio["watchlist"]:
             history = self.history(ticker)
             if history:
-                s = history[0]
+                s = next((s for s in history if s.get("run_settings", {}).get("engine") == "timestral"), None)
+                if s is None:
+                    continue
                 latest[ticker] = {"date": s["trade_date"], "rating": run_rating(s),
                                       "plan": s.get("trader_investment_plan", ""), "decision": s["final_trade_decision"],
-                                      "completed": completed_stages(s)}
+                                      "forecast": s.get("forecast"), "completed": ["Data", "Timestral", "Policy"]}
         return {"portfolio": portfolio, "latest": latest, "active": active,
-                    "provider": self.config["llm_provider"], "quick_model": self.config["quick_think_llm"],
-                    "deep_model": self.config["deep_think_llm"], "fred_configured": bool(os.environ.get("FRED_API_KEY"))}
+                    "provider": "local CPU", "quick_model": self.engine.metadata()["model"],
+                    "deep_model": None, "engine": self.engine.metadata(), "fred_configured": False}
+
+    def calendar(self, day):
+        with self.lock:
+            if self._calendar and self._calendar[0] == day:
+                return self._calendar[1]
+        when = date.fromisoformat(day)
+        start, end = (when - timedelta(days=1100)).isoformat(), (when + timedelta(days=30)).isoformat()
+        if self.automation.broker:
+            rows = self.automation.broker.calendar(start, end)
+        else:
+            import exchange_calendars
+            calendar = exchange_calendars.get_calendar("XNYS", start=start, end=end)
+            rows = [{"date": str(d.date())} for d in calendar.sessions_in_range(start, end)]
+        if not isinstance(rows, list) or not rows or any("date" not in row for row in rows):
+            raise ValueError("Exchange calendar unavailable.")
+        with self.lock:
+            self._calendar = (day, rows)
+        return rows
 
     def start(self, ticker):
         with self.automation.gate:
@@ -118,14 +126,9 @@ class Desk:
         with self.lock:
             if self.active and self.active["status"] == "running":
                 raise ValueError("An analysis is already running. Wait for it to finish.")
-            self.active = {"ticker": ticker, "status": "running", "completed": [], "reports": {}, "stats": {}, "error": None}
-            self.stats = None
+            self.active = {"ticker": ticker, "status": "running", "completed": [], "reports": {}, "stats": {"llm_calls": 0, "model_calls": 0}, "error": None}
 
-    def analyze(self, ticker, portfolio=None, day=None):
-        stats = StatsCallbackHandler()
-        with self.lock:
-            self.stats = stats
-        graph = None
+    def analyze(self, ticker, portfolio=None, day=None, exit_reason=None):
         try:
             if portfolio is None:
                 book = self.store.snapshot()
@@ -133,35 +136,33 @@ class Desk:
                     {"ticker": p["ticker"], "quantity": p["quantity"], "average_price": p["basis"] / p["quantity"] / 100}
                     for p in book["positions"]
                 ]})
-            graph = TradingAgentsGraph(config=copy.deepcopy(self.config), callbacks=[stats])
-            today = day or date.today().isoformat()
-            initial = graph.create_run_state(ticker, today, portfolio=portfolio)
-            args = graph.propagator.get_graph_args(callbacks=[stats])
-            tid = graph.begin_checkpoint(ticker, today, portfolio=portfolio)
-            if tid:
-                args["config"].setdefault("configurable", {})["thread_id"] = tid
-            final = {}
-            for _, chunk in graph.stream_run(graph.checkpoint_input(initial), **args):
-                if chunk:
-                    final.update(chunk)
-                    completed = completed_stages(final)
-                    reports = {name: final[field] for field, name in REPORT_FIELDS.items() if final.get(field)}
-                    with self.lock:
-                        self.active.update(completed=completed, reports=reports, stats=stats.get_stats())
-            graph.record_decision(ticker, today, final)
-            graph.save_reports(final, ticker)
-            graph.clear_checkpoint_on_success(ticker, today, portfolio=portfolio)
-            final["run_settings"] = graph.run_settings()
+            today = day or datetime.now(NEW_YORK).date().isoformat()
             with self.lock:
-                self.active.update(status="done", stats=stats.get_stats())
+                self.active.update(completed=["Data"], stats={"llm_calls": 0, "model_calls": 0})
+            forecast = None if exit_reason else self.engine.forecast(ticker, today, self.calendar(today))
+            held = any(p.ticker == ticker and p.quantity > 0 for p in portfolio.positions)
+            policy = {"rating": "Sell", "reason": exit_reason} if exit_reason else decide(forecast, forecast["last_close"], held)
+            text = "Deadline exit; the model is bypassed." if exit_reason else "\n".join([
+                f"Completed history ends {forecast['last_session']}; {forecast['context_sessions']} sessions. Log adjusted closes.",
+                "| Session | Estimated q10 | Median | Estimated q90 |", "| --- | ---: | ---: | ---: |",
+                *[f"| {r['date']} | {r['q10']:.2f} | {r['median']:.2f} | {r['q90']:.2f} |" for r in forecast["rows"]]])
+            final = {"company_of_interest": ticker, "trade_date": today, "forecast": forecast,
+                     "final_rating": policy["rating"], "market_report": text,
+                     "trader_investment_plan": policy["reason"], "run_settings": self.engine.metadata(),
+                     "final_trade_decision": f"Rating: {policy['rating']}\n{policy['reason']}\nPaper only. Five-session deadline; fresh execution quotes and risk limits still apply. Forecast bands are uncalibrated, not stop-loss guarantees."}
+            from .operations import private_write
+            folder = Path(self.config["results_dir"]) / ticker / "Timestral_logs"
+            private_write(folder / f"full_states_log_{today}.json", json.dumps(final, allow_nan=False).encode())
+            private_write(folder / f"report_{today}.html", render_report(ticker, final, final["run_settings"], report_parts(final)).encode())
+            with self.lock:
+                self.active.update(status="done", completed=["Data", "Timestral", "Policy"], reports={"Forecast": text},
+                                   stats={"llm_calls": 0, "model_calls": int(bool(forecast and not forecast["cache_hit"])),
+                                          "inference_ms": forecast["inference_ms"] if forecast else 0})
             return final
         except Exception as exc:
             logger.exception("Dashboard analysis failed for %s", ticker)
             with self.lock:
                 self.active.update(status="error", error=f"{type(exc).__name__}: analysis failed. Check the server log and retry.")
-        finally:
-            if graph is not None:
-                graph.end_checkpoint()
 
 
 def create_app(config=None, db_path=None):
@@ -176,7 +177,7 @@ def create_app(config=None, db_path=None):
         yield
         app.state.desk.automation.stop()
 
-    app = FastAPI(title="TradingAgents Research Desk", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
+    app = FastAPI(title="Timestral Paper Desk", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     desk = Desk(config or DEFAULT_CONFIG, db_path or Path.home() / ".tradingagents/dashboard/paper.sqlite3")
     app.state.desk = desk
@@ -217,6 +218,25 @@ def create_app(config=None, db_path=None):
     def experiment_data():
         from tradingagents.experiment_report import lab_snapshot
         return lab_snapshot()
+
+    @app.get("/api/timestral/backtest")
+    def timestral_backtest():
+        path = Path.home() / ".tradingagents/experiments/timestral/20261018-fixed-replay/results.json"
+        if not path.exists():
+            return {"ready": False}
+        saved = json.loads(path.read_bytes())
+        fields = ("arm", "sessions", "return_pct", "drawdown_pct", "fills", "average_exposure_pct")
+        return {"ready": True, "completed_at": saved["completed_at"], "plan": saved["plan"],
+                "limits": saved["limits"], "arms": [{k: arm[k] for k in fields} for arm in saved["arms"]]}
+
+    @app.get("/api/timestral/markets")
+    def timestral_markets():
+        path = Path.home() / ".tradingagents/experiments/timestral/cross-market-20261018/results.json"
+        if not path.exists():
+            return {"ready": False}
+        saved = json.loads(path.read_bytes())
+        return {"ready": True, "completed_at": saved["completed_at"], "aggregates": saved["aggregates"],
+                "requested_series": len(saved["plan"]["panel"]), "failed_series": len(saved["failed"]), "limits": saved["limits"]}
 
     @app.get("/api/state")
     def state():
@@ -265,21 +285,21 @@ def create_app(config=None, db_path=None):
         if not row or not row[0]:
             raise HTTPException(404, "Paper research snapshot not found.")
         saved = json.loads(row[0])
-        return HTMLResponse(render_report(saved["company_of_interest"], saved, saved.get("run_settings"), _report_parts(saved)))
+        return HTMLResponse(render_report(saved["company_of_interest"], saved, saved.get("run_settings"), report_parts(saved)))
 
     @app.get("/api/history/{ticker}")
     def history(ticker: str):
         try:
-            return [{"date": s["trade_date"], "rating": run_rating(s)} for s in desk.history(ticker)]
+            return [{"date": s["trade_date"], "rating": run_rating(s), "engine": s.get("run_settings", {}).get("engine", "archived agents")} for s in desk.history(ticker)]
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from None
 
     @app.get("/api/report/{ticker}/{day}")
-    def report(ticker: str, day: str):
+    def report(ticker: str, day: str, engine: str | None = None):
         try:
             for saved in desk.history(ticker):
-                if saved["trade_date"] == day:
-                    return HTMLResponse(render_report(stock_symbol(ticker), saved, saved.get("run_settings"), _report_parts(saved)))
+                if saved["trade_date"] == day and (engine is None or saved.get("run_settings", {}).get("engine", "archived agents") == engine):
+                    return HTMLResponse(render_report(stock_symbol(ticker), saved, saved.get("run_settings"), report_parts(saved)))
         except ValueError:
             pass
         raise HTTPException(404, "Report not found.")
@@ -336,7 +356,7 @@ def main():
         import uvicorn
         app = create_app()
     except ImportError:
-        parser.error('Install the dashboard extra: pip install -e ".[chatgpt,dashboard]"')
+        parser.error('Install the dashboard extra: pip install -e ".[dashboard,timestral]"')
     print(f"Research desk: http://127.0.0.1:{args.port} (paper money only)", flush=True)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
 

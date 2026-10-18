@@ -258,17 +258,20 @@ A saved report also includes `complete_report.html`, the report as one page with
 
 The optional local dashboard adds a persistent US-stock/ETF watchlist, Yahoo price
 charts, live analysis progress, saved daily reports, proposed trade plans, and a
-local simulator plus optional automated Alpaca paper orders. It uses this checkout's engine and configured models,
-including the `chatgpt` subscription provider:
+local simulator plus optional automated Alpaca paper orders. The dashboard now uses
+pinned **Timestral-28M on CPU** and a fixed five-session policy, without ChatGPT
+or agent debates. The original agent CLI remains available. See [TIMESTRAL.md](TIMESTRAL.md)
+for the model, backtest protocol, observed results and limitations:
 
 ```bash
-pip install -e ".[chatgpt,dashboard]"
+pip install -e ".[dashboard,timestral]"
+python -m tradingagents.timestral_engine  # explicit pinned weight download
 tradingagents-dashboard
 ```
 
 Open `http://127.0.0.1:8000`. Use `--port 8001` if that port is occupied.
 The server binds only to loopback. Adding a ticker does not call a model;
-**Analyze** starts one full analysis, with one analysis allowed at a time.
+**Analyze** starts one numerical forecast, with one forecast allowed at a time.
 Manual analyses receive the local simulator's holdings and cash; automated
 cycles receive the Alpaca paper account's book. Historical CLI reports also
 appear in the dashboard.
@@ -296,17 +299,19 @@ market days, processes symbols serially, and catches up if started later in the
 session. **Run one cycle now** can start at the regular-session open. It checks
 Alpaca's exchange clock, including holidays and early closes, and sends no new
 orders within 30 minutes of closing. Positions carry overnight and are reviewed
-daily; there is no forced holding period or automatic stop-loss. This is
-multi-minute daily research, **not HFT**. Keep the server running and Mac awake.
+daily. Confirmed fills schedule an exit by the fifth exchange session, counting
+entry as session one; execution interruptions can delay fills. There is no
+automatic stop-loss. This is daily forecasting, **not HFT**. Keep the server running and Mac awake.
 
-The fixed execution policy interprets final ratings: **Buy** targets 10% of
-equity, **Overweight** 5%, **Hold** keeps holdings, **Underweight** sells half
-(rounded up), **Sell** exits, and unreadable decisions do nothing. Buy targets
-only add shares; they do not trim positions that have appreciated. Buys use
-cash, a 10% cash reserve and a 40% total invested ceiling at sizing time. Whole
+The Timestral policy enters at a 5% equity target only when its terminal median
+exceeds the reference price by 1% and its estimated q10 loss is within 3%.
+Existing holdings are never topped up: a non-positive median return exits early,
+otherwise they wait for their deadline. Bands are uncalibrated estimates, not
+loss limits. Buys retain the 10% cash reserve and 40% invested ceiling. Whole
 shares only, no shorts/margin. Fresh IEX bid/ask quotes must be within five
 minutes and have at most a 1% spread. DAY limit orders allow 0.5% around the
-quoted ask/bid, with no extended-hours execution.
+quoted ask/bid, with no extended-hours execution. Journal-owned fills must match
+broker holdings; manual changes or splits block orders until reconciled.
 
 Each account/symbol/day gets one durable attempt and a deterministic client
 order ID. A local process lock serializes workers sharing a database. Failed
@@ -321,9 +326,10 @@ The dashboard shows actual paper account equity, positions, order statuses,
 partial/full fills and a research/execution journal separately from the local
 manual ledger. Alpaca's simulated fills omit some live trading costs and
 liquidity effects. Measure forward outcomes against a simple benchmark
-and the same models without debate before assuming the extra model calls help.
-The engine's decision-memory/backtest scores are separate from the paper
-portfolio's cash and fill ledger.
+and simple forecasting controls. Historical forecast scores are separate from
+the paper portfolio's cash and fill ledger. A migration epoch separates new
+performance samples while preserving old reports, fills and equity history.
+Carried legacy holdings remain part of the new whole-account performance.
 
 The execution selector also offers an **automatic local snapshot simulator**
 without broker keys. It has its own $100,000 ledger in `forward.sqlite3`,
@@ -346,9 +352,9 @@ samples cannot measure the full intraday drawdown. Run the forward test over
 multiple weeks and compare drawdown, return and execution failures before
 drawing conclusions; the initial run only verifies the plumbing.
 
-Current social inputs are Yahoo headlines, StockTwits and Reddit RSS. There is
-no X/Twitter feed or streaming quote connection. FRED needs its own key, and
-source outages and incomplete historical social coverage still apply.
+This dashboard engine uses numerical price history only. News, social sources,
+X/Twitter and FRED are outside its decision path. The separate original agent CLI
+retains its existing data integrations.
 
 For unattended operation on **macOS**, run this from the configured checkout
 with its virtual environment, after any active research has finished:
